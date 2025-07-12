@@ -1,0 +1,3 @@
+build/
+evodm.egg-info/**
+**/.idea

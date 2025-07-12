@@ -7,7 +7,7 @@ setup(
     author_email = 'dtw43@case.edu',
     packages=['evodm', "evodm.test"], 
     install_requires = [
-      "tensorflow~=2.11.0", 
+      "tensorflow~=2.18.0",
       "numpy",
       "scipy", 
       "networkx", 

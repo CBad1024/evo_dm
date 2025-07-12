@@ -79,8 +79,9 @@ class dp_env:
             for a in range(self.nA):
                 p_list = []
                 #this gets us a 1d list of transition probabilities from s --> s' for all s' in S
-                tps = [i[s] for i in self.tm[a]]
-                
+                # tps = [i[s] for i in self.tm[a]] # wrong shape, creates error in np boolean comparison
+                tps = self.tm[a][:, s].toarray().ravel()
+
                 #iterate through all states S to generate transition tuples s --> s' [(prob, next_state, reward, is_done)]
                 for s_prime in range(self.nS):
                     tp = tps[s_prime]
