@@ -255,7 +255,7 @@ class DrugSelector:
 
             # Update Q value for given state
             current_qs = current_qs_list[index]
-            current_qs[action - 1] = new_q #again we need the minus 1 because of the dumb python indexing system
+            current_qs[action -  1] = new_q #again we need the minus 1 because of the dumb python indexing system
 
             # And append to our training data
             X.append(current_state)
