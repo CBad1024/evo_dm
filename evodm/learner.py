@@ -1,44 +1,84 @@
 # this file will define the learner class, along with required methods -
 # we are taking inspiration (and in some cases borrowing heavily) from the following
 # tutorial: https://pythonprogramming.net/training-deep-q-learning-dqn-reinforcement-learning-python-tutorial/?completed=/deep-q-learning-dqn-reinforcement-learning-python-tutorial/
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Dense, Dropout, Conv1D, MaxPooling1D, Flatten
-from tensorflow.keras.optimizers import Adam
-from tensorflow.python.keras.layers import deserialize, serialize
+import tensorflow as tf
+import keras
+from keras.models import Sequential, Model
+from keras.layers import Dense, Dropout, Conv1D, MaxPooling1D, Flatten
+from keras.optimizers import Adam
+from keras.layers import deserialize, serialize
 from tensorflow.python.keras.saving import saving_utils
-from tensorflow.keras.utils import to_categorical
+from keras.utils import to_categorical
 from collections import deque
 from evodm.evol_game import evol_env, evol_env_wf
 from evodm.dpsolve import backwards_induction, dp_env
 import random
 import numpy as np 
 from copy import deepcopy
-from tqdm import tqdm 
+from tqdm import tqdm
 
 # Function to set hyperparameters for the learner - just edit this any time you
 # want to screw around with them.
 #or edit directly
 
-def unpack(model, training_config, weights):
-    restored_model = deserialize(model)
-    if training_config is not None:
-        restored_model.compile(
-            **saving_utils.compile_args_from_training_config(
-                training_config
-            )
-        )
+# def unpack(model, training_config, weights):
+#     restored_model = deserialize(model)
+#     if training_config is not None:
+#         restored_model.compile(
+#             **saving_utils.compile_args_from_training_config(
+#                 training_config
+#             )
+#         )
+#     restored_model.set_weights(weights)
+#     return restored_model
+#
+# # Hotfix function
+# def make_keras_picklable():
+#
+#     def __reduce__(self):
+#         # model_config = self.get_config()
+#         # weights = self.get_weights()
+#
+#         model_metadata = saving_utils.model_metadata(self)
+#         training_config = model_metadata.get("training_config", None)
+#         model = serialize(self)
+#         weights = self.get_weights()
+#         return (unpack, (model, training_config, weights))
+#
+#     cls = Model
+#     cls.__reduce__ = __reduce__
+
+def unpack(model_config, weights, compile_config=None):
+    from tensorflow.keras.models import Model
+
+    # Recreate model from config
+    restored_model = Model.from_config(model_config)
     restored_model.set_weights(weights)
+
+    # Recompile if compile config is available
+    if compile_config:
+        restored_model.compile(**compile_config)
+
     return restored_model
+
 
 # Hotfix function
 def make_keras_picklable():
-
     def __reduce__(self):
-        model_metadata = saving_utils.model_metadata(self)
-        training_config = model_metadata.get("training_config", None)
-        model = serialize(self)
+        # Get model configuration (replaces serialize)
+        model_config = self.get_config()
         weights = self.get_weights()
-        return (unpack, (model, training_config, weights))
+
+        # Extract compile configuration if model is compiled
+        compile_config = None
+        if hasattr(self, 'optimizer') and self.optimizer is not None:
+            compile_config = {
+                'optimizer': self.optimizer,
+                'loss': self.loss,
+                'metrics': self.metrics if hasattr(self, 'metrics') else None
+            }
+
+        return (unpack, (model_config, weights, compile_config))
 
     cls = Model
     cls.__reduce__ = __reduce__
@@ -255,7 +295,7 @@ class DrugSelector:
 
             # Update Q value for given state
             current_qs = current_qs_list[index]
-            current_qs[action -  1] = new_q #again we need the minus 1 because of the dumb python indexing system
+            current_qs[action] = new_q #again we need the minus 1 because of the dumb python indexing system
 
             # And append to our training data
             X.append(current_state)
@@ -408,11 +448,11 @@ def compute_optimal_action(agent, policy, step, prev_action = False):
 
     if prev_action:
         if agent.env.TRAIN_INPUT == "state_vector": 
-            action = np.argmax(policy[index]) + 1 
+            action = np.argmax(policy[index])
         else:
-            action = policy[index][int(agent.env.prev_action)-1] +1#plus one because I made the bad decision to force the actions to be 1-indexed once upons a time
+            action = policy[index][int(agent.env.prev_action)] #plus one because I made the bad decision to force the actions to be 1-indexed once upons a time
     else:
-        action = policy[index][step] + 1 #plus one because I made the bad decision to force the actions to be 1,2,3,4 once upon a time
+        action = policy[index][step]  #plus one because I made the bad decision to force the actions to be 1,2,3,4 once upon a time
     
     return action
     
@@ -497,7 +537,7 @@ def practice(agent, naive = False, standard_practice = False,
                     if wf:
                         agent.env.update_drug(np.argmax(agent.get_qs()))
                     else:
-                        agent.env.action = np.argmax(agent.get_qs()) + 1 #plus one because of the stupid fucking indexing system
+                        agent.env.action = np.argmax(agent.get_qs())
             else:
                 # Get random action
                 if standard_practice and not wf:
