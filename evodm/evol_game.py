@@ -52,6 +52,8 @@ class evol_env:
         self.NUM_OBS = 100  # number of "OD" readings per evolutionary step
         self.pop_size = []
 
+        self.action_history = [] # history of actions taken by the agent
+
         # should noise be introduced into the fitness readings?
         self.NOISE_MODIFIER = noise_modifier
         self.NOISE_BOOL = add_noise
@@ -139,6 +141,7 @@ class evol_env:
             self.ACTIONS = [i for i in range(self.num_drugs)]  # 0-indexed actions
             self.action = 0  # first action - value will be updated by the learner
             self.prev_action = 0.0  # pretend this is the second time seeing it why not
+            self.action_history.append(self.action)
 
     def define_landscapes(self, drugs, normalize_drugs):
         # default behavior is to generate landscapes completely at random.
@@ -216,7 +219,7 @@ class evol_env:
         self.state_vector = state_vector
         # update action-1 - its assumed that self.action is updated prior to initiating env.step
         self.prev_action = float(self.action)  # type conversion
-
+        self.action_history.append(self.action)
         # done
         return
 
@@ -327,8 +330,10 @@ class evol_env:
                 reward = self.WIN_REWARD
                 self.DONE = True
             else:
-                # need to compute the average fitness across all drugs and then do 1- that
-                reward = (1 - self.compute_average_fitness())
+                # CHANGE: reward is negative of fitness
+                #np.exp(1 - fit) - 1
+                diversity_bonus = compute_diversity_bonus(self.action_history)
+                reward = 2*(np.exp(1 - fitness) - 0.5) - diversity_bonus
         else:
             if self.pop_wcount >= self.WIN_THRESHOLD:
                 reward = -self.WIN_REWARD
@@ -337,9 +342,21 @@ class evol_env:
                 reward = self.WIN_REWARD
                 self.DONE = True
             else:
-                reward = np.mean(1 - fitness)
+                diversity_bonus = self.compute_diversity_bonus(self.action_history)
+                reward = -1 if np.mean(fitness) > 0.8 else (np.exp(1 - fitness) - 0.5) - diversity_bonus
 
         return reward
+
+    def compute_diversity_bonus(self, action_history):
+        """
+        Compute a diversity bonus based on the action history.
+        This function calculates the diversity of actions taken by the agent.
+        """
+        # TRY: length of unique actions vs length of all actions
+        #TRY: entropy of action history
+        unique_actions = set(action_history)
+        diversity_bonus = 0.5 - len(unique_actions) / len(self.ACTIONS)
+        return  diversity_bonus
 
     def add_noise(self, fitness):
         noise_param = np.random.normal(loc=0,
@@ -700,7 +717,7 @@ class evol_env_wf:
             sv, sv_prime = self.convert_fitness(fitness=fit, fitness_prime=fit_prime)
 
         fit = self.compute_pop_fitness(sv=self.pop, drug=self.drug)
-        self.sensor = [sv, self.action, 1 - fit, sv_prime]  # reward is just 1-fitness
+        self.sensor = [sv, self.action, np.exp(1 - fit) - 1, sv_prime]  # CHANGED REWARD TO exp(1-fit) - 1.
 
     def compute_pop_fitness(self, drug, sv):
         x = [(sv[i] * drug[i]) / self.pop_size for i in sv.keys()]

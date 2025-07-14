@@ -169,15 +169,15 @@ def run_rl(env, envdp):
     v_N = 4
     v_mira = True
     v_drugs = 15
-    num_episodes = 500
+    num_episodes = 400
     batch_size = 256
     rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards, dp_policy, naive_policy, policy, dp_V = evol_deepmind(savepath = None, num_evols = 1, N = v_N, episodes = num_episodes,
-                  reset_every = 50, min_epsilon = 0.005,
+                  reset_every = 20, min_epsilon = 0.005,
                   train_input = "state_vector",  random_start = False,
                   noise = False, noise_modifier = 1, num_drugs = v_drugs,
                   sigma = 0.5, normalize_drugs = True,
                   player_wcutoff = -1, pop_wcutoff = 2, win_threshold = 200,
-                  win_reward = 0, standard_practice = False, drugs = None,
+                  win_reward = 1, standard_practice = False, drugs = None,
                   average_outcomes = False, mira = v_mira, gamma = 0.99,
                   learning_rate = 0.0001, minibatch_size = batch_size,
                   pre_trained = False, wf = False,
@@ -186,7 +186,7 @@ def run_rl(env, envdp):
                   pop_size = 10000,
                   agent = "none",
                   update_target_every = 310, total_resistance = False,
-                  starting_genotype = 0, train_freq = 100,
+                  starting_genotype = 0, train_freq = 1,
                   compute_implied_policy_bool = True,
                   dense = False, master_memory = True,
                   delay = 0, phenom = 0)

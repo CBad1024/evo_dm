@@ -8,6 +8,7 @@ from keras.layers import Dense, Dropout, Conv1D, MaxPooling1D, Flatten
 from keras.optimizers import Adam
 from keras.layers import deserialize, serialize
 from tensorflow.python.keras.saving import saving_utils
+from keras.regularizers import L2
 from keras.utils import to_categorical
 from collections import deque
 from evodm.evol_game import evol_env, evol_env_wf
@@ -99,9 +100,9 @@ class hyperparameters:
 
     def __init__(self):
         # Model training settings
-        self.REPLAY_MEMORY_SIZE = 100000
+        self.REPLAY_MEMORY_SIZE = 10000
         self.MASTER_MEMORY = True
-        self.MIN_REPLAY_MEMORY_SIZE = 10000 #TODO Change this to 1000 for real training
+        self.MIN_REPLAY_MEMORY_SIZE = 1000 #TODO Change this to 1000 for real training
         self.MINIBATCH_SIZE = 100  
         self.UPDATE_TARGET_EVERY = 310 #every 500 steps, update the target
         self.TRAIN_INPUT = "state_vector"
@@ -217,8 +218,8 @@ class DrugSelector:
         #because sequence may not be long enough
         if self.hp.TRAIN_INPUT == "state_vector":
             model.add(Conv1D(64, 3, activation="relu",
-                         input_shape=self.env.ENVIRONMENT_SHAPE))
-            model.add(Conv1D(64, 3, activation="relu"))
+                         input_shape=self.env.ENVIRONMENT_SHAPE, kernel_regularizer = L2(0.01)))
+            model.add(Conv1D(64, 3, activation="relu", kernel_regularizer = L2(0.01)))
             model.add(MaxPooling1D(pool_size=2))
             model.add(Flatten())
         elif self.hp.TRAIN_INPUT == "fitness":
@@ -253,6 +254,32 @@ class DrugSelector:
                     self.master_memory.append([self.env.episode_number, self.env.action_number, self.env.sensor, self.env.fitness]) #also record real fitness instead of sensor fitness
         # Trains main network every step during episode
       #gonna chunk this out so I can actually test it
+
+    # def soft_update_target_model(self, tau=0.01):
+    #     '''
+    #     Function to update the target model with weights of the main model
+    #     using soft update method
+    #     ...
+    #     Args
+    #     ------
+    #     self: class DrugSelector
+    #     tau: float
+    #         hyperparameter that controls how much of the main model's weights are copied to the target model
+    #         0.01 is a good value, but can be changed if needed
+    #     '''
+    #     # Get weights from main model
+    #     main_weights = self.model.get_weights()
+    #     # Get weights from target model
+    #     target_weights = self.target_model.get_weights()
+    #     new_weights = []
+    #     # Update target model weights using soft update formula
+    #     for main_weight, target_weight in zip(main_weights, target_weights):
+    #         new_weights.append(tau*main_weight + (1-tau) * target_weight)
+    #
+    #     # Set new weights to target model
+    #     self.target_model.set_weights(new_weights)
+
+
     def train(self):
 
         # Start training only if certain number of samples is already saved
@@ -277,8 +304,10 @@ class DrugSelector:
                        verbose=0, shuffle=False, callbacks=None)
 
         # If counter reaches set value, update target network with weights of main network
+        # ADD TARGET NETWORK STABILIZATION
         if self.env.update_target_counter > self.hp.UPDATE_TARGET_EVERY:
             self.target_model.set_weights(self.model.get_weights())
+            # self.soft_update_target_model(tau = 0.01)
             self.env.update_target_counter = 0
         return history.history['loss'][0]
 
