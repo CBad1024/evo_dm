@@ -119,7 +119,7 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
 
     #gotta modulate epsilon decay based on the number of episodes defined
     #0.005 = epsilon_decay^episodes
-    hp.EPSILON_DECAY = pow(hp.MIN_EPSILON, 1/hp.EPISODES)
+    hp.EPSILON_DECAY = 0.995
 
     if pre_trained and agent != "none":
         agent.master_memory = []
@@ -130,20 +130,23 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
         #hp.NORMALIZE_DRUGS = True
         drugs = define_mira_landscapes()
     #initialize agent, including the updated hyperparameters
+    hp.epsilon = 1
     agent = DrugSelector(hp = hp, drugs = drugs)
-    naive_agent = deepcopy(agent) #otherwise it all gets overwritten by the actual agent
-    if not any([average_outcomes, wf]):
-        dp_agent = deepcopy(agent)
-        dp_rewards, dp_agent, dp_policy, dp_V = practice(dp_agent, dp_solution = True, 
-                                                         discount_rate= hp.DISCOUNT)
+    naive_agent = DrugSelector(hp=hp, drugs = drugs) #otherwise it all gets overwritten by the actual agent (changed from deepcopy(agent)
+
+
+    rewards, agent, policy, V = practice(agent, naive=False, wf=wf,
+                                         train_freq=train_freq,
+                                         compute_implied_policy_bool=compute_implied_policy_bool)  # added arg for train frequency
 
     #run the agent in the naive case and then in the reg case
     naive_rewards, naive_agent, naive_policy, V = practice(naive_agent, naive = True, 
-                                                           standard_practice=standard_practice, 
-                                                           wf=wf)
-    rewards, agent, policy, V = practice(agent, naive = False, wf = wf, 
-                                         train_freq=train_freq, 
-                                         compute_implied_policy_bool=compute_implied_policy_bool) # added arg for train frequency
+                                                           standard_practice=standard_practice, wf=wf)
+    if not any([average_outcomes, wf]):
+        dp_agent = DrugSelector(hp=hp, drugs = drugs) #changed from deepcopy(agent)
+        dp_rewards, dp_agent, dp_policy, dp_V = practice(dp_agent, dp_solution = True,
+                                                         discount_rate= hp.DISCOUNT)
+
     if wf:
         dp_policy=[]
         dp_agent=[]

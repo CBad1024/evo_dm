@@ -99,9 +99,9 @@ class hyperparameters:
 
     def __init__(self):
         # Model training settings
-        self.REPLAY_MEMORY_SIZE = 10000
+        self.REPLAY_MEMORY_SIZE = 100000
         self.MASTER_MEMORY = True
-        self.MIN_REPLAY_MEMORY_SIZE = 1000
+        self.MIN_REPLAY_MEMORY_SIZE = 10000 #TODO Change this to 1000 for real training
         self.MINIBATCH_SIZE = 100  
         self.UPDATE_TARGET_EVERY = 310 #every 500 steps, update the target
         self.TRAIN_INPUT = "state_vector"
@@ -273,13 +273,14 @@ class DrugSelector:
         X,y = self.enumerate_batch(minibatch = minibatch, future_qs_list = future_qs_list, 
                                    current_qs_list = current_qs_list)
                                    
-        self.model.fit(X, y, batch_size=self.hp.MINIBATCH_SIZE, 
+        history = self.model.fit(X, y, batch_size=self.hp.MINIBATCH_SIZE,
                        verbose=0, shuffle=False, callbacks=None)
 
         # If counter reaches set value, update target network with weights of main network
         if self.env.update_target_counter > self.hp.UPDATE_TARGET_EVERY:
             self.target_model.set_weights(self.model.get_weights())
             self.env.update_target_counter = 0
+        return history.history['loss'][0]
 
     #function to enumerate batch and generate X/y for training
     def enumerate_batch(self, minibatch, future_qs_list, current_qs_list):
@@ -336,7 +337,27 @@ class DrugSelector:
                                                             self.env.ENVIRONMENT_SHAPE[0])
 
         return current_states, new_current_states
-    
+
+    def q_table(self):
+        '''
+        Function to return the q table learned by the DQ learner.
+        ...
+        Args
+        ------
+        self: class DrugSelector
+
+        Returns filled q table, each row is a q-vector for a given state s. Shape is (S, A)
+        '''
+        q_table = []
+
+        for s in range(len(self.env.state_vector)):
+            self.env.state_vector = np.zeros((2 ** self.env.N, 1))
+            self.env.state_vector[s] = 1
+            q_table.append(self.get_qs())
+
+        return np.array(q_table)
+
+
     def compute_implied_policy(self, update):
         '''
         Function to compute the implied policy learned by the DQ learner. 
@@ -502,6 +523,7 @@ def practice(agent, naive = False, standard_practice = False,
     #every given number of episodes we are going to track the stats
     #format is [average_reward, min_reward, max_reward]
     reward_list = []
+    losses_list = []
     #initialize list of per episode rewards
     #ep_rewards = []
     count=1
@@ -564,7 +586,9 @@ def practice(agent, naive = False, standard_practice = False,
 
             if not any([dp_solution, naive, pre_trained]):
                 if count % train_freq == 0: #this will prevent us from training every freaking time step
-                    agent.train()
+                    loss=agent.train()
+                    if episode % 10 == 0:
+                        losses_list.append(loss)
                     if train_freq > agent.hp.RESET_EVERY and compute_implied_policy_bool:
                         if not agent.hp.NUM_EVOLS > 1:
                             agent.compute_implied_policy(update = True)
@@ -601,8 +625,14 @@ def practice(agent, naive = False, standard_practice = False,
                 agent.hp.epsilon *= agent.hp.EPSILON_DECAY
                 agent.hp.epsilon = max(agent.hp.MIN_EPSILON, agent.hp.epsilon)
 
+        if episode % 10 == 0 and not naive and not dp_solution:
+            policy = agent.compute_implied_policy(update=False)
+            print("Episode ", episode, "| calculated policy: ", np.array([np.argmax(s) for s in policy]), " | epsilon: ", agent.hp.epsilon, " | fitness: ", np.mean(agent.env.fitness), " | loss: ", losses_list[-1])
+
         # reset environment for next iteration
         agent.env.reset()
+
+
     if dp_solution:
         policy = dp_policy
     elif naive:
@@ -613,6 +643,7 @@ def practice(agent, naive = False, standard_practice = False,
         V=[]
     elif compute_implied_policy_bool:
         policy = agent.compute_implied_policy(update = False)
+        print("POLICY LENGTH ", len(policy))
         V=[]
     else:
         policy = []

@@ -328,7 +328,7 @@ class evol_env:
                 self.DONE = True
             else:
                 # need to compute the average fitness across all drugs and then do 1- that
-                reward = (1 - self.compute_average_fitness)
+                reward = (1 - self.compute_average_fitness())
         else:
             if self.pop_wcount >= self.WIN_THRESHOLD:
                 reward = -self.WIN_REWARD

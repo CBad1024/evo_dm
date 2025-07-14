@@ -52,6 +52,7 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
     opt_drug_list = []
     time_step_list = []
     fitness_list = []
+    state_list = []
 
     for i in range(num_episodes):
         env.reset()
@@ -62,6 +63,7 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
                 action_opt = policy[j, current_state_index]
             else:
                 # For Value/PolicyIteration, policy is shaped (state,)
+                print("POLICY LENGTH mira_mdp ", len(policy))
                 action_opt = policy[current_state_index]
 
             # print("POLICY ", policy)
@@ -75,10 +77,12 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
             time_step_list.append(j)
             ep_number_list.append(i)
             fitness_list.append(np.mean(env.fitness))
+            state_list.append(np.argmax(env.state_vector))
 
     results_df = pd.DataFrame({
         'episode': ep_number_list,
         'time_step': time_step_list,
+        'state': state_list,
         'drug': opt_drug_list,
         'fitness': fitness_list
     })
@@ -96,7 +100,7 @@ def main(mdp = False, rl = False):
     if mdp:
         run_mdp(envdp, env)
     if rl:
-        run_rl()
+        run_rl(env, envdp)
 
 
 
@@ -106,11 +110,7 @@ def main(mdp = False, rl = False):
 
 
     # --- RL Agent Training  ---
-    # print("\nUsing non-naive RL to solve system:")
-    # rewards_NN, agent_NN, _, __ = practice(learner_env, prev_action=True, compute_implied_policy_bool=True)
-    # policy_NN_one_hot = agent_NN.compute_implied_policy(update = True)
-    # policy_NN = np.array([np.argmax(a) for a in policy_NN_one_hot])
-    # print("policy shape under non-naive RL: ", policy_NN)
+
 
     # print("\nUsing naive RL agent to solve system...")
     # rewards_N, agent_N, _, __= practice(learner_env_naive, prev_action=False, standard_practice=True, compute_implied_policy_bool=True, train_freq = 5)
@@ -165,18 +165,21 @@ def run_mdp(envdp, env):
     print(pi_results.to_string())
     print("\nAverage fitness under PI policy:", pi_results['fitness'].mean())
 
-def run_rl():
+def run_rl(env, envdp):
     v_N = 4
     v_mira = True
-    evol_deepmind(savepath = None, num_evols = 1, N = v_N, episodes = 50,
-                  reset_every = 20, min_epsilon = 0.005,
-                  train_input = "fitness",  random_start = False,
-                  noise = False, noise_modifier = 1, num_drugs = 4,
+    v_drugs = 15
+    num_episodes = 500
+    batch_size = 256
+    rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards, dp_policy, naive_policy, policy, dp_V = evol_deepmind(savepath = None, num_evols = 1, N = v_N, episodes = num_episodes,
+                  reset_every = 50, min_epsilon = 0.005,
+                  train_input = "state_vector",  random_start = False,
+                  noise = False, noise_modifier = 1, num_drugs = v_drugs,
                   sigma = 0.5, normalize_drugs = True,
                   player_wcutoff = -1, pop_wcutoff = 2, win_threshold = 200,
                   win_reward = 0, standard_practice = False, drugs = None,
                   average_outcomes = False, mira = v_mira, gamma = 0.99,
-                  learning_rate = 0.0001, minibatch_size = 60,
+                  learning_rate = 0.0001, minibatch_size = batch_size,
                   pre_trained = False, wf = False,
                   mutation_rate = 1e-5,
                   gen_per_step = 500,
@@ -187,6 +190,19 @@ def run_rl():
                   compute_implied_policy_bool = True,
                   dense = False, master_memory = True,
                   delay = 0, phenom = 0)
+
+    print(":: RETURNED POLICY ", np.array(policy))
+    format_policy = np.array([np.argmax(s) for s in policy])
+    print("policy shape under non-naive RL: ", np.array(policy).shape)
+    print("final policy", format_policy)
+
+    print("\nQ-table: ", agent.q_table())
+
+    print("\nSimulating policy from Non-naive RL...")
+    RL_NN_results = get_sequences(format_policy, env, num_episodes = 10, episode_length=envdp.nS, finite_horizon=False)
+    print("RL NN results:")
+    print(RL_NN_results.to_string())
+    print("\nAverage fitness under RL_NN policy:", RL_NN_results['fitness'].mean())
 
 if __name__ == "__main__":
     main(mdp = False, rl = True)
