@@ -119,7 +119,7 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
 
     #gotta modulate epsilon decay based on the number of episodes defined
     #0.005 = epsilon_decay^episodes
-    hp.EPSILON_DECAY = 0.999
+    hp.EPSILON_DECAY = 0.99
 
     if pre_trained and agent != "none":
         agent.master_memory = []
