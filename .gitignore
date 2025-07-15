@@ -4,3 +4,5 @@ evodm.egg-info/**
 **/__pycache__/**
 .vscode
 .DS_Store
+*.log
+*.pdf
