@@ -63,7 +63,6 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
                 action_opt = policy[j, current_state_index]
             else:
                 # For Value/PolicyIteration, policy is shaped (state,)
-                print("POLICY LENGTH mira_mdp ", len(policy))
                 action_opt = policy[current_state_index]
 
             # print("POLICY ", policy)
@@ -189,7 +188,7 @@ def run_rl(env, envdp):
                   starting_genotype = 0, train_freq = 1,
                   compute_implied_policy_bool = True,
                   dense = False, master_memory = True,
-                  delay = 0, phenom = 0)
+                  delay = 0, phenom = 1)
 
     print(":: RETURNED POLICY ", np.array(policy))
     format_policy = np.array([np.argmax(s) for s in policy])

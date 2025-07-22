@@ -1,4 +1,4 @@
-from .landscapes import Landscape
+from .landscapes import Landscape, Seascape
 import numpy as np
 from tensorflow.keras.utils import to_categorical
 import math
@@ -25,7 +25,7 @@ class evol_env:
                  train_input="state_vector", num_evols=1,
                  random_start=False,
                  num_drugs=4,
-                 num_conc=10,
+                 concentrations=[0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.0],
                  normalize_drugs=True,
                  win_threshold=10,
                  player_wcutoff=0.8,
@@ -59,7 +59,8 @@ class evol_env:
         self.NOISE_BOOL = add_noise
         self.AVERAGE_OUTCOMES = average_outcomes
         self.SEASCAPES = seascapes
-        self.num_conc = num_conc
+        self.num_conc = len(concentrations)
+        self.concentrations = concentrations
 
         # measurement delay (i.e. are state vector readings delayed by n time steps)
         self.DELAY = delay
@@ -162,15 +163,14 @@ class evol_env:
             self.drugs = normalize_landscapes(self.drugs,
                                               seascapes=self.SEASCAPES)
         if self.SEASCAPES:
-            # In this case, their are two variables that define a landscape (dose, drug) instead of just drug
-            self.landscapes = {}
+            # In this case, access a seascapes object by drug name
+            self.seascapes = {}
             for i in drugs.keys():
-                self.landscapes[i] = [Landscape(ls=drugs[i][j], N=self.N,
-                                                sigma=self.sigma, dense=self.DENSE)
-                                      for j in drugs[i]]
+                self.seascapes[i] = Seascape(ls_max=drugs[i], N=self.N,
+                                                sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations) #TODO Come back to this
+
                 # precompute the transition matrices
-                self.landscapes[i] = [self.landscapes[i][j].get_TM_phenom(phenom=self.PHENOM)
-                                      for j in range(len(self.landscapes[i]))]
+                self.seascapes[i] = [self.seascapes[i].get_TM_phenom(phenom=self.PHENOM)]
 
         else:
             self.landscapes = [Landscape(ls=i, N=self.N, sigma=self.sigma,
@@ -332,7 +332,7 @@ class evol_env:
             else:
                 # CHANGE: reward is negative of fitness
                 #np.exp(1 - fit) - 1
-                diversity_bonus = compute_diversity_bonus(self.action_history)
+                diversity_bonus = self.compute_diversity_bonus(self.action_history)
                 reward = 2*(np.exp(1 - fitness) - 0.5) - diversity_bonus
         else:
             if self.pop_wcount >= self.WIN_THRESHOLD:

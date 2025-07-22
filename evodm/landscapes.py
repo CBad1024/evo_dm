@@ -1,3 +1,5 @@
+from tabnanny import format_witnesses
+
 import numpy as np
 import scipy.linalg as la
 import scipy.optimize as op
@@ -208,16 +210,20 @@ class Landscape:
             return TM
         else: return self.TM
 
+
+
+    ###----------------------------NEVER USED----------------------------###
+    # NO USES
     def find_one_step_neighbors(self, index):
         """
         Returns a list of indicies and a list of fitnesses in this landscape
         which are 1 mutational step away from the given index.
         """
         mut = range(self.N)
-        adjMut = [index ^ (1 << m) for m in mut]                     # For the current genotype index, creates list of genotypes that are 1 mutation away.
+        adjMut = [index ^ (1 << m) for m in
+                  mut]  # For the current genotype index, creates list of genotypes that are 1 mutation away.
         adjFit = [self.ls[j] for j in adjMut]
         return adjMut, adjFit
-
     def find_two_step_neighbors(self, index):
         """
         Returns a list of indicies and a list of fitnesses in this landscape
@@ -233,6 +239,7 @@ class Landscape:
         adjFit = [self.ls[j] for j in adjMut]
         return adjMut, adjFit
 
+    # NO USES
     def find_two_step_neighbors2(self, index):
         """
         Alternate implementation for find_two_step_neighbors which is more
@@ -249,7 +256,8 @@ class Landscape:
         adjFit = [self.ls[j] for j in adjMut]
         return adjMut, adjFit
 
-    #next few functions support the whacky hgt landscapes
+    ###---------------USED FOR HGT (HORIZONTAL GENE TRANSFER) ONLY---------------###
+
     def find_max_indices_alt(self):
         """
         Returns a list of indices of local maxes in this landscape, allowing for multi-step jumps
@@ -297,6 +305,8 @@ class Landscape:
                 mins.append(i)
         return mins
 
+    ###------------------------------------------------------------------------###
+
     def evolve(self, steps, p0):
         """
         Returns an array of genotype occupation probabilities after stepping in
@@ -312,6 +322,7 @@ class Landscape:
         TM_stepped = TM ** steps
         return TM_stepped.dot(p0)
 
+###---------NOT USED------------------###
     def evolve_dense(self, steps, p0):
         """
         Returns an array of genotype occupation probabilities after stepping in
@@ -325,6 +336,9 @@ class Landscape:
             p0[0][0] = 1
         return np.dot(np.linalg.matrix_power(TM, steps), p0)
 
+    ###-----------------------------------###
+
+    ### ------- HELPER ------------------###
     def evolve_switching(self, B, steps, store_TM=False):
         """
         Returns an array of genotype occupation probabilities after alternating
@@ -343,6 +357,8 @@ class Landscape:
             ABTM = np.dot(ATM,BTM)
             return np.dot(np.linalg.matrix_power(ABTM, (steps-1)//2), p0)
 
+
+    ###-----------------------------------###
     def evolve_phenom(self, steps, phenom, store_TM=False):
         """
         Returns an array of genotype occupation probabilities after stepping in
@@ -399,6 +415,7 @@ class Landscape:
             ABTM = np.dot(ATM,BTM)
             return np.dot(np.linalg.matrix_power(ABTM, (steps-1)//2), p0)
 
+    ###----------------NOT USED-------------------###
     def calc_fitness(self, steps, store_TMs=True):
         """
         Returns:
@@ -456,7 +473,11 @@ class Landscape:
             fitAB_B.append(np.dot(Bs[i].ls, p)[0])
         return (fitA, fitAB_A, fitAB_B)
 
-    
+    ###--------------------------------------------------------###
+
+
+
+
     def generate_correlated_landscapes(self, correl):
         """ 
         generates correlated landscapes according to the np.linspace specified in 'correl'
@@ -516,7 +537,7 @@ class Landscape:
             count += 1
 
         return Bs
-
+    ###----------------------------NOT USED-----------------------------###
     def calc_nonzero_steadystate_prob(self, steps):
         """
         Computes the fraction of nonzero probability genotypes (out of the total number of genotypes) in the probability vector after steps rounds of evolution
@@ -642,7 +663,11 @@ class Landscape:
 
     def __str__(self):
         return self.__repr__()
-        
+
+    ###---------------------------------------------------------###
+
+
+
     def graph(self, p=None, verbose=False):
         """
         Plots a graph representation of this landscape on the current matplotlib figure.
@@ -755,94 +780,307 @@ class Landscape:
         ax.collections[0].set_edgecolor("#000000")
 
     
-    def graphTraj(self, TM, N, p=None, verbose=False):
+    # def graphTraj(self, TM, N, p=None, verbose=False):
+    #     """
+        # Modified version of graph(). Deprecated.
+        # """
+        # #TM = self.get_TM()
+        # # Transpose TM because draw functions uses transposed version.
+        # TM = list(map(list, zip(*TM)))
+        #
+        # # Figure out the length of the bit sequences we're working with
+        # N = N
+        #
+        # # Generate all possible N-bit sequences
+        # genotypes = ["".join(seq) for seq in itertools.product("01", repeat=N)]
+        #
+        # # Turn the unique bit sequences array into a list of tuples with the bit sequence and its corresponding fitness
+        # # The tuples can still be used as nodes because they are hashable objects
+        # genotypes = [(genotypes[i], self.ls[i]) for i in range(len(genotypes))]
+        #
+        # # Build hierarchical structure for N-bit sequences that differ by 1 bit at each level
+        # hierarchy = [[] for i in range(N+1)]
+        # for g in genotypes: hierarchy[g[0].count("1")].append(g)
+        #
+        # # Add all unique bit sequences as nodes to the graph
+        # G = nx.DiGraph()
+        # G.add_nodes_from(genotypes)
+        #
+        # # Add edges with appropriate weights depending on the TM
+        # sf = 5 # edge thickness scale factor
+        # for i in range(len(TM)):
+        #     for j in range(len(TM[i])):
+        #         if TM[i][j] != 0 and i != j:
+        #             G.add_edge(genotypes[i], genotypes[j], weight=sf*TM[i][j])
+        #
+        # # Find the local & global min/max
+        # maxes = []
+        # mins = []
+        # for node in G:
+        #     if len(G[node]) == 0:
+        #         maxes.append(node)
+        #     elif len(G[node]) == N:
+        #         mins.append(node)
+        #
+        # # Create label dict for max/min nodes
+        # labels = {}
+        # for n in maxes:
+        #     labels[n] = " "
+        # for n in mins:
+        #     labels[n] = " "
+        #
+        # # Store all the edge weights in a list so they can be used to control the edge widths when drawn
+        # edges = G.edges()
+        # weights = [G[u][v]['weight'] for u,v in edges]
+        #
+        # # just using spring layout to generate an initial dummy pos dict
+        # pos = nx.spring_layout(G)
+        #
+        # # calculate how many entires in the longest row, it will be N choose N/2
+        # # because the longest row will have every possible way of putting N/2 1s (or 0s) into N bits
+        # maxLen = math.factorial(N) / math.factorial(N//2)**2
+        #
+        # # Position the nodes in a layered hierarchical structure by modifying pos dict
+        # y = 1
+        # for row in hierarchy:
+        #     if len(row) > maxLen: maxLen = len(row)
+        # for i in range(len(hierarchy)):
+        #     levelLen = len(hierarchy[i])
+        #     # algorithm for horizontal spacing.. may not be 100% correct?
+        #     offset = (maxLen - levelLen + 1) / maxLen
+        #     xs = np.linspace(0 + offset / 2, 1 - offset / 2, levelLen)
+        #     for j in range(len(hierarchy[i])):
+        #         pos[hierarchy[i][j]] = (xs[j], y)
+        #     y -= 1 / N
+        #
+        # # Print node structure to console
+        # if verbose:
+        #     for i in range(len(hierarchy)):
+        #         print(("Row {}: " + str([h[0] for h in hierarchy[i]]).strip('[]')).format(i+1))
+        #     print()
+        #
+        # node_size = 500
+        # if p is not None:
+        #     node_size = [10 + 1000*val for val in p]
+        #
+        # # Draw the graph
+        # plt.axis('off')
+        # node_vals = [g[1] for g in G.nodes()]
+        # nx.draw(G, pos, with_labels=False, width=weights, linewidths=1, cmap=plt.get_cmap('Greys'), node_color=node_vals,node_size=node_size)
+        # nx.draw_networkx_labels(G,pos,labels,font_size=16,font_color='red') # labels for min/max nodes
+        # ax = plt.gca()
+        # ax.collections[0].set_edgecolor("#000000")
+
+
+
+
+class Seascape(Landscape):
+    """
+    This class represents seascapes, which are landscapes that account for drug concentrations. It is required to give concentration of 0 as last concentration value.
+    """
+
+    def __init__(self, N, sigma, ss=None, ls_max = None, parent=None, num_jumps=1, dense=False,
+                 compute_tm=False, concentrations=[0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.0], hill_coeff=1, ic50s = None):
         """
-        Modified version of graph(). Depreciated.
+        Initializes seascape objects with given N and sigma to simulate epistasis (zero sigma produces an additive landscape with exactly one global maximum).
         """
-        #TM = self.get_TM()
-        # Transpose TM because draw functions uses transposed version.
-        TM = list(map(list, zip(*TM)))
+        self.dense = dense
+        self.N = N
+        self.sigma = sigma
+        self.Bs = None
+        self.num_jumps = num_jumps
+        self.concentrations = concentrations
 
-        # Figure out the length of the bit sequences we're working with
-        N = N
+        self.hill_coeff = hill_coeff
 
-        # Generate all possible N-bit sequences
-        genotypes = ["".join(seq) for seq in itertools.product("01", repeat=N)]
+        if ic50s is None:
+            self.ic50s = np.zeros(2**N)
+            for i in range(2**N):
+                self.ic50s[i] = np.random.uniform(self.concentrations[-1], self.concentrations[0]) # Generates a random IC50 for each genotype between the lowest and highest concentrations.
+        else:
+            self.ic50s = ic50s
 
-        # Turn the unique bit sequences array into a list of tuples with the bit sequence and its corresponding fitness
-        # The tuples can still be used as nodes because they are hashable objects
-        genotypes = [(genotypes[i], self.ls[i]) for i in range(len(genotypes))]
+        self.TM = np.zeros(len(self.concentrations), 2**N, 2**N)
 
-        # Build hierarchical structure for N-bit sequences that differ by 1 bit at each level
-        hierarchy = [[] for i in range(N+1)]
-        for g in genotypes: hierarchy[g[0].count("1")].append(g)
 
-        # Add all unique bit sequences as nodes to the graph
-        G = nx.DiGraph()
-        G.add_nodes_from(genotypes)
+        ## Use IC50s to generate hill equation for each drug
+        ## then plug in concentrations to get fitnesses
+        ## finally use the fitnesses to additively generate the seascape and then add noise on top of everything.
+        if ss is None and ls_max is None:
+            self.ss = np.zeros(len(self.concentrations),1) # Initializes seascape with zeros for each concentration and each genotype.
+            self.ss[-1, 0] = 0 # 0 drug concentration initially set to 0 fitness for the wild type (set to 1 later).
+            fitnesses = np.random.uniform(-1, 1, N) # each mutation gets a random fitness that will be used to additively generate the seascape.
+            for mut in range(N):
+                np.append(self.ss[-1], self.ss[-1] + fitnesses[mut]) # Adds the fitness of each mutation to the seascape at 0 concentration.
 
-        # Add edges with appropriate weights depending on the TM
-        sf = 5 # edge thickness scale factor
-        for i in range(len(TM)):
-            for j in range(len(TM[i])):
-                if TM[i][j] != 0 and i != j:
-                    G.add_edge(genotypes[i], genotypes[j], weight=sf*TM[i][j])
+            self.ss[-1, 0] = 1 # Sets the wild type fitness at 0 concentration to 1.
+            # now we can generate hill equations for each genotype
+            for i in range(len(concentrations)):
+                for j in range(2**N):
+                    #using seascapes as defined by Eshan King's paper
+                    self.ss[i, j] = self.ss[-1, j]/ (1 + np.exp((ic50s[j] - np.log10(i))/hill_coeff))
 
-        # Find the local & global min/max
-        maxes = []
-        mins = []
-        for node in G:
-            if len(G[node]) == 0:
-                maxes.append(node)
-            elif len(G[node]) == N:
-                mins.append(node)
+            # Add noise to the seascape
+            if self.sigma != 0:
+                noise = np.random.normal(0, self.sigma, (len(self.concentrations), 2**N))
+                self.ss += noise
 
-        # Create label dict for max/min nodes
-        labels = {}
-        for n in maxes:
-            labels[n] = " "
-        for n in mins:
-            labels[n] = " "
 
-        # Store all the edge weights in a list so they can be used to control the edge widths when drawn
-        edges = G.edges()
-        weights = [G[u][v]['weight'] for u,v in edges]
+        elif ls_max is not None:
+            #assume the provided landscape is the maximum dosage landscape
+            self.ss = np.zeros((len(self.concentrations), 2**N))
+            self.ss[0, :] = ls_max # set the first concentration to the provided landscape
+            ## Now we can generate hill equations for each genotype and extend to all concentrations
 
-        # just using spring layout to generate an initial dummy pos dict
-        pos = nx.spring_layout(G)
+            self.ss[-1, :] = self.ss[0, :]*(1+np.exp((ic50s - np.log10(ls_max))/hill_coeff))
 
-        # calculate how many entires in the longest row, it will be N choose N/2
-        # because the longest row will have every possible way of putting N/2 1s (or 0s) into N bits
-        maxLen = math.factorial(N) / math.factorial(N//2)**2
+            for i in range(len(concentrations)):
+                for j in range(2 ** N):
+                    # using seascapes as defined by Eshan King's paper
+                    self.ss[i, j] = self.ss[-1, j] / (1 + np.exp((ic50s[j] - np.log10(i)) / hill_coeff))
 
-        # Position the nodes in a layered hierarchical structure by modifying pos dict
-        y = 1
-        for row in hierarchy:
-            if len(row) > maxLen: maxLen = len(row)
-        for i in range(len(hierarchy)):
-            levelLen = len(hierarchy[i])
-            # algorithm for horizontal spacing.. may not be 100% correct?
-            offset = (maxLen - levelLen + 1) / maxLen
-            xs = np.linspace(0 + offset / 2, 1 - offset / 2, levelLen)
-            for j in range(len(hierarchy[i])):
-                pos[hierarchy[i][j]] = (xs[j], y)
-            y -= 1 / N
+        else:
+            self.ss = ss
+        if parent is not None: self.parent = parent
 
-        # Print node structure to console
-        if verbose:
-            for i in range(len(hierarchy)):
-                print(("Row {}: " + str([h[0] for h in hierarchy[i]]).strip('[]')).format(i+1))
-            print()
+        if compute_tm:
+            self.get_TM_phenom(store=True)
 
-        node_size = 500
-        if p is not None:
-            node_size = [10 + 1000*val for val in p]
+    def get_TM(self, conc = -1, store=True):
+        """
+        Returns the transition matrix for this landscape, accounting for dosage concentrations.
+        Args:
+            phenom:
+            store:
 
-        # Draw the graph
-        plt.axis('off')
-        node_vals = [g[1] for g in G.nodes()]
-        nx.draw(G, pos, with_labels=False, width=weights, linewidths=1, cmap=plt.get_cmap('Greys'), node_color=node_vals,node_size=node_size)
-        nx.draw_networkx_labels(G,pos,labels,font_size=16,font_color='red') # labels for min/max nodes
-        ax = plt.gca()
-        ax.collections[0].set_edgecolor("#000000")
+        Returns:
+            transition matrix
+
+        """
+        # Take one step neighbors and their fitnesses
+        # if fitness is higher than current, transition matrix from original index to new index is
+
+        if not hasattr(self, 'TM'):
+            mut = range(self.N)                                               # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+            TM = sparse.csr_matrix((2**self.N,2**self.N))                              # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+
+
+            for i in range(2**self.N):
+                adjMut = [i ^ (1 << m) for m in mut]                          # For the current genotype i, creates list of genotypes that are 1 mutation away.
+
+                adjFit = np.array([self.ss[conc, j] for j in adjMut])                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+
+                fitter = self.ss[self.ss[conc, :] - self.ss[conc, i] > 0]
+
+                fitLen = len(fitter)
+                if fitLen == 0:                                               # If no mutations are more fit, stay in current genotype.
+                    TM[i,i] = 1
+                else:
+                    dfit = np.power(adjFit - adjFit[i], 0)
+                    prob_mut = np.divide(dfit,np.sum(dfit))
+                    count = 0
+                    for f in fitter:
+                        TM[adjMut[f],i] = prob_mut[count]
+                        count += 1
+            if store: self.TM[conc] = TM # store the transition matrix for this landscape object
+            return TM
+        else: return self.TM[conc]
+
+    def get_TM_phenom(self, phenom=0, conc = -1, store=True):
+        """
+        Returns the transition matrix for this landscape, accounting for dosage concentrations.
+        Args:
+            phenom:
+            store:
+
+        Returns:
+            transition matrix
+
+        """
+        # Take one step neighbors and their fitnesses
+        # if fitness is higher than current, transition matrix from original index to new index is
+
+        if not hasattr(self, 'TM'):
+            mut = range(self.N)                                               # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+            TM = sparse.csr_matrix((2**self.N,2**self.N))                              # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+
+
+            for i in range(2**self.N):
+                adjMut = [i ^ (1 << m) for m in mut]                          # For the current genotype i, creates list of genotypes that are 1 mutation away.
+
+                adjFit = np.array([self.ss[conc, j] for j in adjMut])                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+
+                fitter = self.ss[self.ss[conc, :] - self.ss[conc, i] > 0]
+
+                fitLen = len(fitter)
+                if fitLen == 0:                                               # If no mutations are more fit, stay in current genotype.
+                    TM[i,i] = 1
+                else:
+                    dfit = np.power(adjFit - adjFit[i], phenom)
+                    prob_mut = np.divide(dfit,np.sum(dfit))
+                    count = 0
+                    for f in fitter:
+                        TM[adjMut[f],i] = prob_mut[count]
+                        count += 1
+            if store: self.TM[conc] = TM # store the transition matrix for this landscape object
+            return TM
+        else: return self.TM[conc]
+
+    def get_TM_phenom_inf(self, conc = -1, store=False):
+        """
+        Returns the transition matrix for this landscape, with phenomenological stepping (see Tan and Gore 2012). If store=True, it will
+        be saved in a field of this object (TM) for later use. If a stored copy already
+        exists for this landscape, it will be returned with no wasted computation.
+        """
+        if not hasattr(self, 'TM'):
+            mut = range(self.N)  # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+            TM = sparse.csr_matrix((2 ** self.N,
+                                    2 ** self.N))  # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+
+            for i in range(2 ** self.N):
+                adjMut = [i ^ (1 << m) for m in
+                          mut]  # For the current genotype i, creates list of genotypes that are 1 mutation away.
+
+                adjFit = self.ss[adjMut]  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+
+                fitter = self.ss[self.ss[conc, :] - self.ss[conc, i] > 0]  # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
+
+                fitLen = len(fitter)
+                if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
+                    TM[i, i] = 1
+                else:
+                    fitMax = np.argmax(adjFit)
+                    TM[adjMut[fitMax], i] = 1
+
+            if store: self.TM[conc] = TM  # store the transition matrix for this landscape object
+            return TM
+        else:
+            return self.TM[conc]
+
+        #TODO probably should rename transition matrix to transition tensor
+
+    ###-------------------- EVOLUTION METHODS --------------------###
+    def evolve(self, steps, p0):
+        """
+        Returns an array of genotype occupation probabilities after stepping in
+        this seascape steps times.
+        """
+        T_Tensor = [0 for i in range(len(self.concentrations))]  # Initialize a tensor to hold transition matrices for each concentration
+        for conc in range(len(self.concentrations)):
+            TM = self.get_TM(conc)
+            if p0 is not None:
+                self.p0 = p0
+            else:
+                p0 = sparse.csr_matrix((2 ** self.N, 1))
+                p0[0, 0] = 1
+
+            TM_stepped = TM ** steps
+            T_Tensor[conc] = TM_stepped.dot(p0)
+        return T_Tensor
+
+
+
+
+
+
 

@@ -13,6 +13,7 @@ from keras.utils import to_categorical
 from collections import deque
 from evodm.evol_game import evol_env, evol_env_wf
 from evodm.dpsolve import backwards_induction, dp_env
+from evodm.hyperparameters import hyperparameters
 import random
 import numpy as np 
 from copy import deepcopy
@@ -87,68 +88,7 @@ def make_keras_picklable():
 # Run the function
 make_keras_picklable()
 
-class hyperparameters:
-    '''
-    class to store the hyperparemeters that control evoDM
-    ...
-    Args
-    ------
-    self: class hyperparameters
-    
-    Returns class hyperparameters
-    '''
 
-    def __init__(self):
-        # Model training settings
-        self.REPLAY_MEMORY_SIZE = 10000
-        self.MASTER_MEMORY = True
-        self.MIN_REPLAY_MEMORY_SIZE = 1000 #TODO Change this to 1000 for real training
-        self.MINIBATCH_SIZE = 100  
-        self.UPDATE_TARGET_EVERY = 310 #every 500 steps, update the target
-        self.TRAIN_INPUT = "state_vector"
-        self.DELAY = 0
-        
-        # Exploration settings
-        self.DISCOUNT = 0.99  
-        self.epsilon = 1  # lowercase because its not a constant
-        self.EPSILON_DECAY = 0.95
-        self.MIN_EPSILON = 0.001
-        self.LEARNING_RATE = 0.0001
-
-        # settings control the evolutionary simulation
-        self.NUM_EVOLS = 1 # how many evolutionary steps per time step
-        self.SIGMA = 0.5
-        self.NORMALIZE_DRUGS = True # should fitness values for all landscapes be bound between 0 and 1?
-        self.AVERAGE_OUTCOMES = False #should we use the average of infinite evolutionary sims or use a single trajectory?
-        self.DENSE = False #will transition matrix be stored in dense or sparse format?
-        # new evolutionary "game" every n steps or n *num_evols total evolutionary movements
-        self.RESET_EVERY = 20
-        self.EPISODES = 500
-        self.N = 5
-        self.RANDOM_START = False
-        self.STARTING_GENOTYPE = 0 #default to starting at the wild type genotype
-        self.NOISE = False #should the sensor readings be noisy?
-        self.NOISE_MODIFIER = 1  #enable us to increase or decrease the amount of noise in the system
-        self.NUM_DRUGS = 4
-        self.MIRA = True
-        self.TOTAL_RESISTANCE = False
-        self.PHENOM = 0
-        #wright-fisher controls
-        self.WF = False
-        self.POP_SIZE = 10000
-        self.GEN_PER_STEP = 1
-        self.MUTATION_RATE = 1e-5
-
-        #define victory conditions for player and pop
-        self.PLAYER_WCUTOFF = 0.001
-        self.POP_WCUTOFF = 0.999
-
-        #define victory threshold
-        self.WIN_THRESHOLD = 1000 # number of player actions before the game is called
-        self.WIN_REWARD = 0
-
-        # stats settings - 
-        self.AGGREGATE_STATS_EVERY = 1  #agg every episode
 
 # This is the class for the learning agent
 class DrugSelector:
@@ -556,6 +496,7 @@ def practice(agent, naive = False, standard_practice = False,
     #initialize list of per episode rewards
     #ep_rewards = []
     count=1
+    num_experiences = 0
     for episode in tqdm(range(1, agent.hp.EPISODES + 1), ascii=True, unit='episodes', 
                         disable = True if any([dp_solution, naive, pre_trained]) else False):
         # Restarting episode - reset episode reward and step number
@@ -566,6 +507,7 @@ def practice(agent, naive = False, standard_practice = False,
         for i in range(agent.hp.RESET_EVERY+1):
             if i==0:
                 agent.env.step()
+                num_experiences += 1
                 continue
             i_fixed =i-1 #correct for the drastic step we had to take up above ^
             # This part stays mostly the same, the change is to query a model for Q values
@@ -606,6 +548,7 @@ def practice(agent, naive = False, standard_practice = False,
 
             #we don't save anything - it stays in the class
             agent.env.step()
+            num_experiences += 1
 
             #reward = agent.env.sensor[2]
             #episode_reward += reward
@@ -649,10 +592,12 @@ def practice(agent, naive = False, standard_practice = False,
               #      f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
 
         # Decay epsilon - only if agent is not naive -- since we are calling it twice
+        # Only decay if the agent has reached the minimum size of replay buffer
         if not naive:
-            if agent.hp.epsilon > agent.hp.MIN_EPSILON:
-                agent.hp.epsilon *= agent.hp.EPSILON_DECAY
-                agent.hp.epsilon = max(agent.hp.MIN_EPSILON, agent.hp.epsilon)
+            agent.hp.epsilon *= agent.hp.EPSILON_DECAY
+            agent.hp.epsilon = max(agent.hp.MIN_EPSILON, agent.hp.epsilon)
+            if num_experiences < agent.hp.MIN_REPLAY_MEMORY_SIZE :
+                agent.hp.epsilon = 1
 
         if episode % 10 == 0 and not naive and not dp_solution:
             policy = agent.compute_implied_policy(update=False)
