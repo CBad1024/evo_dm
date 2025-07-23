@@ -1,4 +1,5 @@
 from mdptoolbox.mdp import FiniteHorizon
+import sys
 
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
 from evodm.evol_game import define_mira_landscapes, evol_env
@@ -6,8 +7,27 @@ from evodm.learner import DrugSelector, hyperparameters, practice
 from evodm.exp import evol_deepmind
 import numpy as np
 import pandas as pd
+import logging
+import datetime as dt
+import builtins
 
+# Set up logging
+timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(f"mira_mdp_{timestamp}.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
+# Alias all prints as logger.info for consistency
+def print(*args, **kwargs):
+    logger.info(' '.join(str(arg) for arg in args))
+
+builtins.print = print
 def mira_env():
     """Initializes the MDP environment and a simulation environment."""
     drugs = define_mira_landscapes()
