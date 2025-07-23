@@ -900,14 +900,13 @@ class Seascape(Landscape):
         else:
             self.ic50s = ic50s
 
-        self.TM = np.zeros(len(self.concentrations), 2**N, 2**N)
 
 
         ## Use IC50s to generate hill equation for each drug
         ## then plug in concentrations to get fitnesses
         ## finally use the fitnesses to additively generate the seascape and then add noise on top of everything.
         if ss is None and ls_max is None:
-            self.ss = np.zeros(len(self.concentrations),1) # Initializes seascape with zeros for each concentration and each genotype.
+            self.ss = np.zeros((len(self.concentrations),)) # Initializes seascape with zeros for each concentration and each genotype.
             self.ss[-1, 0] = 0 # 0 drug concentration initially set to 0 fitness for the wild type (set to 1 later).
             fitnesses = np.random.uniform(-1, 1, N) # each mutation gets a random fitness that will be used to additively generate the seascape.
             for mut in range(N):
@@ -918,7 +917,7 @@ class Seascape(Landscape):
             for i in range(len(concentrations)):
                 for j in range(2**N):
                     #using seascapes as defined by Eshan King's paper
-                    self.ss[i, j] = self.ss[-1, j]/ (1 + np.exp((ic50s[j] - np.log10(i))/hill_coeff))
+                    self.ss[i, j] = self.ss[-1, j]/ (1 + np.exp((self.ic50s[j] - np.log10(i))/hill_coeff))
 
             # Add noise to the seascape
             if self.sigma != 0:
@@ -929,22 +928,62 @@ class Seascape(Landscape):
         elif ls_max is not None:
             #assume the provided landscape is the maximum dosage landscape
             self.ss = np.zeros((len(self.concentrations), 2**N))
+
             self.ss[0, :] = ls_max # set the first concentration to the provided landscape
             ## Now we can generate hill equations for each genotype and extend to all concentrations
 
-            self.ss[-1, :] = self.ss[0, :]*(1+np.exp((ic50s - np.log10(ls_max))/hill_coeff))
+            self.ss[-1, :] = self.ss[0, :]*(1+np.exp((self.ic50s - np.log10(ls_max))/hill_coeff))
 
-            for i in range(len(concentrations)):
+            for i in range(1, len(concentrations)-1):
                 for j in range(2 ** N):
                     # using seascapes as defined by Eshan King's paper
-                    self.ss[i, j] = self.ss[-1, j] / (1 + np.exp((ic50s[j] - np.log10(i)) / hill_coeff))
+                    self.ss[i, j] = self.ss[-1, j] / (1 + np.exp((self.ic50s[j] - np.log10(i)) / hill_coeff))
 
         else:
             self.ss = ss
         if parent is not None: self.parent = parent
 
+        # print(self.ss)
+        # print(ls_max)
+        self.TMs = self.init_TM()
+
         if compute_tm:
             self.get_TM_phenom(store=True)
+
+    def init_TM(self):
+        """
+        Initializes the transition matrix for this seascape object.
+        """
+        mut = range(self.N)  # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+        TMs = []
+        for conc in range(len(self.concentrations)):
+            TM = sparse.csr_matrix((2 ** self.N,
+                                    2 ** self.N))  # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+
+            for i in range(2 ** self.N):
+                adjMut = [i ^ (1 << m) for m in
+                          mut]  # For the current genotype i, creates list of genotypes that are 1 mutation away.
+
+                adjFit = np.array([self.ss[conc, j] for j in
+                                   adjMut])  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+
+                fitter = np.nonzero(adjFit - self.ss[conc, i] > 0)[0]
+
+                fitLen = len(fitter)
+                if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
+                    TM[i, i] = 1
+                else:
+                    dfit = np.power(adjFit - self.ss[conc, i], 0)
+                    prob_mut = np.divide(dfit, np.sum(dfit))
+                    count = 0
+                    for f in fitter:
+                        TM[adjMut[f], i] = 1/len(fitter)
+                        count += 1
+            TMs.append(TM)
+        return np.array(TMs)
+
+
+
 
     def get_TM(self, conc = -1, store=True):
         """
@@ -957,34 +996,17 @@ class Seascape(Landscape):
             transition matrix
 
         """
+
         # Take one step neighbors and their fitnesses
         # if fitness is higher than current, transition matrix from original index to new index is
 
         if not hasattr(self, 'TM'):
             mut = range(self.N)                                               # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
-            TM = sparse.csr_matrix((2**self.N,2**self.N))                              # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+            TMs = self.init_TM()                           # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
 
-
-            for i in range(2**self.N):
-                adjMut = [i ^ (1 << m) for m in mut]                          # For the current genotype i, creates list of genotypes that are 1 mutation away.
-
-                adjFit = np.array([self.ss[conc, j] for j in adjMut])                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
-
-                fitter = self.ss[self.ss[conc, :] - self.ss[conc, i] > 0]
-
-                fitLen = len(fitter)
-                if fitLen == 0:                                               # If no mutations are more fit, stay in current genotype.
-                    TM[i,i] = 1
-                else:
-                    dfit = np.power(adjFit - adjFit[i], 0)
-                    prob_mut = np.divide(dfit,np.sum(dfit))
-                    count = 0
-                    for f in fitter:
-                        TM[adjMut[f],i] = prob_mut[count]
-                        count += 1
-            if store: self.TM[conc] = TM # store the transition matrix for this landscape object
-            return TM
-        else: return self.TM[conc]
+            if store: self.TMs = TMs # store the transition matrix for this landscape object
+            return TMs[conc]
+        else: return self.TMs[conc]
 
     def get_TM_phenom(self, phenom=0, conc = -1, store=True):
         """
@@ -1010,21 +1032,21 @@ class Seascape(Landscape):
 
                 adjFit = np.array([self.ss[conc, j] for j in adjMut])                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
-                fitter = self.ss[self.ss[conc, :] - self.ss[conc, i] > 0]
+                fitter = np.nonzero(adjFit - self.ss[conc, i] > 0)[0]
 
                 fitLen = len(fitter)
                 if fitLen == 0:                                               # If no mutations are more fit, stay in current genotype.
                     TM[i,i] = 1
                 else:
-                    dfit = np.power(adjFit - adjFit[i], phenom)
+                    dfit = np.power(adjFit - self.ss[conc, i], phenom)
                     prob_mut = np.divide(dfit,np.sum(dfit))
                     count = 0
                     for f in fitter:
                         TM[adjMut[f],i] = prob_mut[count]
                         count += 1
-            if store: self.TM[conc] = TM # store the transition matrix for this landscape object
+            if store: self.TMs[conc] = TM # store the transition matrix for this landscape object
             return TM
-        else: return self.TM[conc]
+        else: return self.TMs[conc]
 
     def get_TM_phenom_inf(self, conc = -1, store=False):
         """
@@ -1043,7 +1065,7 @@ class Seascape(Landscape):
 
                 adjFit = self.ss[adjMut]  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
-                fitter = self.ss[self.ss[conc, :] - self.ss[conc, i] > 0]  # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
+                fitter = np.nonzero(adjFit - self.ss[conc, i] > 0)[0]
 
                 fitLen = len(fitter)
                 if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
@@ -1060,7 +1082,7 @@ class Seascape(Landscape):
         #TODO probably should rename transition matrix to transition tensor
 
     ###-------------------- EVOLUTION METHODS --------------------###
-    def evolve(self, steps, p0):
+    def evolve(self, steps, curr_conc, p0):
         """
         Returns an array of genotype occupation probabilities after stepping in
         this seascape steps times.
@@ -1074,9 +1096,27 @@ class Seascape(Landscape):
                 p0 = sparse.csr_matrix((2 ** self.N, 1))
                 p0[0, 0] = 1
 
-            TM_stepped = TM ** steps
+            # print(TM.shape)
+            TM_stepped = TM ** steps  # Raise the transition matrix to the power of steps
             T_Tensor[conc] = TM_stepped.dot(p0)
-        return T_Tensor
+        T_Tensor = np.array(T_Tensor)
+        return T_Tensor[curr_conc]  # Return the occupation probabilities for the specified concentration
+
+    def vector_power(self, v, p):
+        """
+        Raises a vector v to the power p, where p is an integer. This is
+        equivalent to multiplying the vector by itself p times.
+        """
+        if p == 0:
+            return np.ones_like(v)
+        elif p < 0:
+            raise ValueError("Power must be non-negative")
+        else:
+            result = v.copy()
+            for _ in range(p - 1):
+                result = np.multiply(result, v)
+            return result
+
 
 
 

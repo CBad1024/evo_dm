@@ -103,7 +103,7 @@ class evol_env:
         self.define_landscapes(drugs=drugs, normalize_drugs=normalize_drugs)
         # define action space and initial action.
         self.define_actions()
-
+        self.action_space_size = len(self.ACTIONS)
         ##initialize state vector
         if self.RANDOM_START:
             self.state_vector = np.ones((2 ** N, 1)) / 2 ** N
@@ -114,7 +114,11 @@ class evol_env:
         self.update_state_mem(state_vector=self.state_vector)
 
         ##Define initial fitness
-        self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]
+        if self.SEASCAPES: #drugs is of form x: drug, y: concentration, z: state
+            self.fitness = [np.dot(self.drugs[self.action[0]][self.action[1]], self.state_vector)]
+        else:
+            self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]
+
         if self.NOISE_BOOL:
             self.sensor_fitness = self.add_noise(self.fitness)
         else:
@@ -136,8 +140,9 @@ class evol_env:
         # in the environment in the landscapes case.
         # In the seascapes case, actions are a tuple of (dose, drug) pairs
         if self.SEASCAPES:
-            self.actions = [(i, j) for i in self.drugs.keys() for j in range(self.num_conc)]
-            self.action = ('gefitinib', 0)  # first action - value will be updated by the learner
+            print("Seascapes enabled")
+            self.ACTIONS = [(i, j) for i in range(len(self.drugs)) for j in range(self.num_conc)]
+            self.action = (0, 0)  # first action - value will be updated by the learner
         else:
             self.ACTIONS = [i for i in range(self.num_drugs)]  # 0-indexed actions
             self.action = 0  # first action - value will be updated by the learner
@@ -160,17 +165,18 @@ class evol_env:
             self.drugs = drugs
         # Normalize landscapes if directed
         if normalize_drugs:
-            self.drugs = normalize_landscapes(self.drugs,
-                                              seascapes=self.SEASCAPES)
+            self.drugs = normalize_landscapes(self.drugs)
+
         if self.SEASCAPES:
             # In this case, access a seascapes object by drug name
-            self.seascapes = {}
-            for i in drugs.keys():
-                self.seascapes[i] = Seascape(ls_max=drugs[i], N=self.N,
-                                                sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations) #TODO Come back to this
+            self.seascapes = [None for i in range(len(self.drugs))]
+            for i in range(len(self.drugs)):
+
+                self.seascapes[i] = Seascape(ss=drugs[i], N=self.N,
+                                                sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations)
 
                 # precompute the transition matrices
-                self.seascapes[i] = [self.seascapes[i].get_TM_phenom(phenom=self.PHENOM)]
+                [self.seascapes[i].get_TM_phenom(phenom=self.PHENOM)]
 
         else:
             self.landscapes = [Landscape(ls=i, N=self.N, sigma=self.sigma,
@@ -190,11 +196,22 @@ class evol_env:
         self.time_step += self.NUM_EVOLS
         self.action_number += 1
         self.update_target_counter += 1
-
+        if self.SEASCAPES:
+            try:
+                self.action[0]
+            except:
+                self.action = (np.floor(self.action/self.num_conc).astype(int), self.action % self.num_conc)
         # Run the sim under the assigned conditions
         if self.action not in self.ACTIONS:  # Check if action is valid
             raise ValueError(f"Invalid action {self.action}. Must be one of {self.ACTIONS}")
-        fitness, state_vector = run_sim(evol_steps=self.NUM_EVOLS,
+
+        if self.SEASCAPES:
+            fitness, state_vector = run_sim_ss(evol_steps=self.NUM_EVOLS,
+                                            state_vector=self.state_vector,
+                                            ss=self.seascapes[self.action[0]],  # Use 0-indexed action
+                                            average_outcomes=self.AVERAGE_OUTCOMES, conc = self.action[1])
+        else:
+            fitness, state_vector = run_sim(evol_steps=self.NUM_EVOLS,
                                         state_vector=self.state_vector,
                                         ls=self.landscapes[self.action],  # Use 0-indexed action
                                         average_outcomes=self.AVERAGE_OUTCOMES)
@@ -218,7 +235,10 @@ class evol_env:
         # update the current state vector
         self.state_vector = state_vector
         # update action-1 - its assumed that self.action is updated prior to initiating env.step
-        self.prev_action = float(self.action)  # type conversion
+        if self.SEASCAPES:
+            self.prev_action = self.action
+        else:
+            self.prev_action = float(self.action)  # type conversion
         self.action_history.append(self.action)
         # done
         return
@@ -414,14 +434,20 @@ class evol_env:
         self.episode_number += 1
 
         # re-initialize the action number
-        self.action = 0  # Use 0-indexed action
+        if self.SEASCAPES:
+            self.action = (0, 0)
+        else:
+            self.action = 0  # Use 0-indexed action
 
         # re-initialize victory conditions
         self.pop_wcount = 0
         self.player_wcount = 0
         self.done = False
         # re-calculate fitness with the new state_vector
-        self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]  # Use 0-indexed action
+        if self.SEASCAPES:
+            self.fitness = [np.dot(self.drugs[self.action[0]][ self.action[1]], self.state_vector)]
+        else:
+            self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]  # Use 0-indexed action
         if self.NOISE_BOOL:
             self.fitness = self.add_noise(self.fitness)
         self.sensor = []
@@ -470,6 +496,7 @@ def generate_landscapes2(N=4, sigma=0.5, num_drugs=4, CS=False, dense=False, cor
     return landscapes, drugs
 
 
+
 def normalize_landscapes(drugs, seascapes=False):
     if seascapes:
         for i in drugs.keys():
@@ -496,12 +523,47 @@ def discretize_state(state_vector):
     converting the returned average outcomes to a single population trajectory.
     '''
     S = [i for i in range(len(state_vector))]
-    probs = state_vector.reshape(len(state_vector))
+    probs = state_vector.T.flatten()
     # choose one state - using the relative frequencies of the other states as the probabilities of being selected
     state = np.random.choice(S, size=1, p=probs)  # pick a state for the whole p
     new_states = np.zeros((len(state_vector), 1))
     new_states[state] = 1
     return new_states
+
+def run_sim_ss(evol_steps, ss, state_vector, average_outcomes=False, conc = 0):
+    '''
+    Function to progress evolutionary simulation forward n times steps in a given fitness regime defined by action under
+    a seascape
+
+    Args
+        evol_steps: int
+            number of steps
+        state_vector: array
+            N**2 length array defining the position of the population in genotype space
+        average_outcomes bool
+            should all possible futures be averaged into the state vector or should
+            we simulate a single evolutionary trajectory? defaults to False
+    Returns: fitness, state_vector
+        fitness:
+            population fitness in chosen drug regime
+    '''
+    reward = []
+    # Evolve for 100 steps.
+    for i in range(evol_steps):
+        # This is the fitness of the population when the drug is selected to be used.
+        if not average_outcomes:
+            state_vector = discretize_state(state_vector)
+
+        reward.append(np.dot(ss.ss[conc], state_vector))
+
+        # Performs a single evolution step - TM should be stored in the landscape object
+        state_vector = ss.evolve(1, curr_conc = conc, p0=state_vector)
+
+    if not average_outcomes:
+        state_vector = discretize_state(state_vector)  # discretize again before sending it back
+
+    reward = np.squeeze(reward)
+    return reward, state_vector
 
 
 def run_sim(evol_steps, ls, state_vector, average_outcomes=False):

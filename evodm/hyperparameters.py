@@ -59,7 +59,7 @@ class hyperparameters:
 
 
         #seascapes controls
-        self.SEASCAPES = False
+        self.SEASCAPES = True
         self.NUM_CONC = 10
 
 

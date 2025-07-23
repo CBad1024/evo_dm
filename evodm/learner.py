@@ -19,6 +19,9 @@ import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
 
+from evodm.landscapes import Seascape
+
+
 # Function to set hyperparameters for the learner - just edit this any time you
 # want to screw around with them.
 #or edit directly
@@ -129,7 +132,7 @@ class DrugSelector:
                                 player_wcutoff = self.hp.PLAYER_WCUTOFF, 
                                 pop_wcutoff= self.hp.POP_WCUTOFF,
                                 win_reward=self.hp.WIN_REWARD, 
-                                drugs = drugs, 
+                                drugs = self.make_drugs_seascapes(drugs),
                                 add_noise = self.hp.NOISE, 
                                 noise_modifier= self.hp.NOISE_MODIFIER,
                                 average_outcomes=self.hp.AVERAGE_OUTCOMES, 
@@ -137,7 +140,7 @@ class DrugSelector:
                                 total_resistance= self.hp.TOTAL_RESISTANCE,
                                 dense=self.hp.DENSE,
                                 delay=self.hp.DELAY, 
-                                phenom=self.hp.PHENOM)
+                                phenom=self.hp.PHENOM, seascapes = True)
 
         # main model  # gets trained every step
         self.model = self.create_model()
@@ -150,6 +153,18 @@ class DrugSelector:
         self.master_memory = []
         self.target_update_counter = 0
         self.policies = []
+
+    def make_drugs_seascapes(self, drugs):
+        """
+        Function to extend drugs into seascapes format
+        Args:
+            drugs: 2D array of drugs, each row is a drug, each column is a state, each value is a fitness value
+
+        Returns: array of drugs in seascapes format, which is a 3D tensor. First axis gives drug, and each element of that first axis is the 2D array of fitness values for that drug at different concentrations across all states.
+
+        """
+        seascapes = np.array([Seascape(N=self.hp.N, sigma=self.hp.SIGMA, ls_max=drugs[i]).ss for i in range(len(drugs))])
+        return seascapes
 
     def create_model(self):
 
@@ -255,7 +270,6 @@ class DrugSelector:
     def enumerate_batch(self, minibatch, future_qs_list, current_qs_list):
         X = []
         y = []
-
         for index, (current_state, action, reward, new_current_state) in enumerate(minibatch):
 
             # If not a terminal state, get new q from future states, otherwise set it to 0
@@ -265,7 +279,11 @@ class DrugSelector:
 
             # Update Q value for given state
             current_qs = current_qs_list[index]
-            current_qs[action] = new_q #again we need the minus 1 because of the dumb python indexing system
+            if self.env.SEASCAPES:
+                ind = action[0]*8 + action[1] #converting tuple action to index
+                current_qs[ind] = new_q
+            else:
+                current_qs[action] = new_q
 
             # And append to our training data
             X.append(current_state)
@@ -350,7 +368,7 @@ class DrugSelector:
                 self.env.state_vector[s] = 1
                 action = np.argmax(self.get_qs())
                 policy.append(to_categorical(action, 
-                              num_classes = len(self.env.drugs)))
+                              num_classes = self.env.action_space_size))
                 
         else:  #if the train input was fitness
             #put together action list
@@ -497,7 +515,7 @@ def practice(agent, naive = False, standard_practice = False,
     #ep_rewards = []
     count=1
     num_experiences = 0
-    for episode in tqdm(range(1, agent.hp.EPISODES + 1), ascii=True, unit='episodes', 
+    for episode in tqdm(range(1, agent.hp.EPISODES + 1), ascii=True, unit='episodes',
                         disable = True if any([dp_solution, naive, pre_trained]) else False):
         # Restarting episode - reset episode reward and step number
         #episode_reward = 0
@@ -518,6 +536,7 @@ def practice(agent, naive = False, standard_practice = False,
                         #Only change the action if fitness is above 0.9
                         if np.mean(agent.env.fitness) > 0.9:
                             avail_actions = [action for action in agent.env.ACTIONS if action != agent.env.action] #grab all actions except the one currently selected
+
                             agent.env.action = random.sample(avail_actions, k = 1)[0] #need to take the first element of the list because thats how random.sample outputs it
                     else: 
                         if wf:
@@ -528,7 +547,7 @@ def practice(agent, naive = False, standard_practice = False,
                     agent.env.action = compute_optimal_action(agent, dp_policy, step = i_fixed, prev_action=prev_action)
                 else:
                     if wf:
-                        agent.env.update_drug(np.argmax(agent.get_qs()))
+                        agent.env.update_drug(np.argmax(agent.get_qs())) #TODO CHANGE ALL TO SEASCAPES
                     else:
                         agent.env.action = np.argmax(agent.get_qs())
             else:
@@ -542,8 +561,11 @@ def practice(agent, naive = False, standard_practice = False,
                     agent.env.action = compute_optimal_action(agent, dp_policy, step = i_fixed, prev_action = prev_action)
                 elif wf:
                     agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS)))
-                else: 
-                    agent.env.action = random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS))
+                else:
+                    if agent.env.SEASCAPES:
+                        agent.env.action = random.sample(agent.env.ACTIONS, k = 1)[0]
+                    else:
+                        agent.env.action = random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS))
 
 
             #we don't save anything - it stays in the class
@@ -601,7 +623,11 @@ def practice(agent, naive = False, standard_practice = False,
 
         if episode % 10 == 0 and not naive and not dp_solution:
             policy = agent.compute_implied_policy(update=False)
-            print("Episode ", episode, "| calculated policy: ", np.array([np.argmax(s) for s in policy]), " | epsilon: ", agent.hp.epsilon, " | fitness: ", np.mean(agent.env.fitness), " | loss: ", losses_list[-1])
+            if agent.env.SEASCAPES:
+                calculated_policy = np.array([(np.floor(np.argmax(s)/8), np.argmax(s)%8) for s in policy])
+            else:
+                calculated_policy = np.array([np.argmax(s) for s in policy])
+            print("Episode ", episode, "| calculated policy: ", calculated_policy, " | epsilon: ", agent.hp.epsilon, " | fitness: ", np.mean(agent.env.fitness), " | loss: ", losses_list[-1])
 
         # reset environment for next iteration
         agent.env.reset()

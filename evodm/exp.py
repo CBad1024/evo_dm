@@ -143,10 +143,10 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     #run the agent in the naive case and then in the reg case
     naive_rewards, naive_agent, naive_policy, V = practice(naive_agent, naive = True, 
                                                            standard_practice=standard_practice, wf=wf)
-    if not any([average_outcomes, wf]):
-        dp_agent = DrugSelector(hp=hp, drugs = drugs) #changed from deepcopy(agent)
-        dp_rewards, dp_agent, dp_policy, dp_V = practice(dp_agent, dp_solution = True,
-                                                         discount_rate= hp.DISCOUNT)
+    # if not any([average_outcomes, wf]):
+    #     dp_agent = DrugSelector(hp=hp, drugs = drugs) #changed from deepcopy(agent)
+    #     dp_rewards, dp_agent, dp_policy, dp_V = practice(dp_agent, dp_solution = True,
+    #                                                      discount_rate= hp.DISCOUNT)
 
     if wf:
         dp_policy=[]
@@ -158,7 +158,10 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
         file =open(savepath, 'wb')
         pickle.dump(agent, file)
         file.close()
-
+    dp_agent = None
+    dp_rewards = None
+    dp_policy = None
+    dp_V = None
     return [rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards,
             dp_policy, naive_policy, policy, dp_V]
 

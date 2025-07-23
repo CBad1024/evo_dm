@@ -34,6 +34,7 @@ class dp_env:
         
         self.drugs = drugs #need these later to compute reward
         #define the landscapes
+
         landscapes = [Landscape(ls = i, N=N, sigma = sigma, dense = False) for i in drugs]
         #get the transition matrix for each landscape
         #if phenom > 0:

@@ -1,3 +1,5 @@
+from mdptoolbox.mdp import FiniteHorizon
+
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
 from evodm.evol_game import define_mira_landscapes, evol_env
 from evodm.learner import DrugSelector, hyperparameters, practice
@@ -68,7 +70,7 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
             # print("POLICY ", policy)
             # action_opt = policy[current_state_index]
             # evol_env now expects 0-indexed actions
-            env.action = int(action_opt)
+            env.action = int(action_opt) if not env.SEASCAPES else action_opt
             env.step()
 
             # save the optimal drug, time step, and episode number
@@ -170,6 +172,21 @@ def run_rl(env, envdp):
     v_drugs = 15
     num_episodes = 400
     batch_size = 256
+
+    # # TESTING PURPOSES ONLY
+    # hp = hyperparameters()
+    # hp.N = v_N
+    # a = DrugSelector(hp, define_mira_landscapes())
+    # policy = [(0, 0) for i in range(2**v_N)]
+    # test_results = get_sequences(policy, a.env, finite_horizon=False)
+    # print(test_results.to_string())
+    # print("\nAverage fitness under this policy:", test_results['fitness'].mean())
+
+    hp = hyperparameters()
+    hp.N = v_N
+    hp.mira = v_mira
+    hp.num_episodes = num_episodes
+    hp.batch_size = batch_size
     rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards, dp_policy, naive_policy, policy, dp_V = evol_deepmind(savepath = None, num_evols = 1, N = v_N, episodes = num_episodes,
                   reset_every = 20, min_epsilon = 0.005,
                   train_input = "state_vector",  random_start = False,
@@ -188,7 +205,7 @@ def run_rl(env, envdp):
                   starting_genotype = 0, train_freq = 1,
                   compute_implied_policy_bool = True,
                   dense = False, master_memory = True,
-                  delay = 0, phenom = 1)
+                  delay = 0, phenom = 1, min_replay_memory_size = 1000)
 
     print(":: RETURNED POLICY ", np.array(policy))
     format_policy = np.array([np.argmax(s) for s in policy])
