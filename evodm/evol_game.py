@@ -114,6 +114,7 @@ class evol_env:
         self.update_state_mem(state_vector=self.state_vector)
 
         ##Define initial fitness
+        #TODO Change here
         if self.SEASCAPES: #drugs is of form x: drug, y: concentration, z: state
             self.fitness = [np.dot(self.drugs[self.action[0]][self.action[1]], self.state_vector)]
         else:
@@ -139,6 +140,7 @@ class evol_env:
         # define the action space - this is a list of integers that the agent can take
         # in the environment in the landscapes case.
         # In the seascapes case, actions are a tuple of (dose, drug) pairs
+        #TODO Change here
         if self.SEASCAPES:
             print("Seascapes enabled")
             self.ACTIONS = [(i, j) for i in range(len(self.drugs)) for j in range(self.num_conc)]
@@ -166,7 +168,7 @@ class evol_env:
         # Normalize landscapes if directed
         if normalize_drugs:
             self.drugs = normalize_landscapes(self.drugs)
-
+        #TODO Change here
         if self.SEASCAPES:
             # In this case, access a seascapes object by drug name
             self.seascapes = [None for i in range(len(self.drugs))]
@@ -196,6 +198,8 @@ class evol_env:
         self.time_step += self.NUM_EVOLS
         self.action_number += 1
         self.update_target_counter += 1
+        #TODO : change to implement a single learner to learn drug cycling and second to learn dosing strategy
+        # under seascapes the action should first be just the drug and for the second learner it should be the dose
         if self.SEASCAPES:
             try:
                 self.action[0]
@@ -204,7 +208,7 @@ class evol_env:
         # Run the sim under the assigned conditions
         if self.action not in self.ACTIONS:  # Check if action is valid
             raise ValueError(f"Invalid action {self.action}. Must be one of {self.ACTIONS}")
-
+        #TODO Change here
         if self.SEASCAPES:
             fitness, state_vector = run_sim_ss(evol_steps=self.NUM_EVOLS,
                                             state_vector=self.state_vector,
@@ -235,6 +239,7 @@ class evol_env:
         # update the current state vector
         self.state_vector = state_vector
         # update action-1 - its assumed that self.action is updated prior to initiating env.step
+        #TODO change here
         if self.SEASCAPES:
             self.prev_action = self.action
         else:
@@ -434,6 +439,7 @@ class evol_env:
         self.episode_number += 1
 
         # re-initialize the action number
+        #TODO: change here
         if self.SEASCAPES:
             self.action = (0, 0)
         else:
@@ -444,6 +450,7 @@ class evol_env:
         self.player_wcount = 0
         self.done = False
         # re-calculate fitness with the new state_vector
+        #TODO CHange here
         if self.SEASCAPES:
             self.fitness = [np.dot(self.drugs[self.action[0]][ self.action[1]], self.state_vector)]
         else:
@@ -496,8 +503,9 @@ def generate_landscapes2(N=4, sigma=0.5, num_drugs=4, CS=False, dense=False, cor
     return landscapes, drugs
 
 
-
+#TODO Change Here
 def normalize_landscapes(drugs, seascapes=False):
+    #TODO Change Here
     if seascapes:
         for i in drugs.keys():
             for j in drugs[i].keys():

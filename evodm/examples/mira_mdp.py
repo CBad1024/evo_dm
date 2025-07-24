@@ -225,7 +225,7 @@ def run_rl(env, envdp):
                   starting_genotype = 0, train_freq = 1,
                   compute_implied_policy_bool = True,
                   dense = False, master_memory = True,
-                  delay = 0, phenom = 1, min_replay_memory_size = 1000)
+                  delay = 0, phenom = 1, min_replay_memory_size = 1000, seascapes = False)
 
     print(":: RETURNED POLICY ", np.array(policy))
     format_policy = np.array([np.argmax(s) for s in policy])

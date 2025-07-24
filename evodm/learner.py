@@ -122,6 +122,10 @@ class DrugSelector:
                                    mutation_rate = self.hp.MUTATION_RATE)
         else:
             # initialize the environment
+            if self.hp.SEASCAPES:
+                self.drugs = self.make_drugs_seascapes(drugs)
+            else:
+                self.drugs = drugs
             self.env = evol_env(num_evols=self.hp.NUM_EVOLS, N = self.hp.N,
                                 train_input= self.hp.TRAIN_INPUT, 
                                 random_start=self.hp.RANDOM_START, 
@@ -132,7 +136,7 @@ class DrugSelector:
                                 player_wcutoff = self.hp.PLAYER_WCUTOFF, 
                                 pop_wcutoff= self.hp.POP_WCUTOFF,
                                 win_reward=self.hp.WIN_REWARD, 
-                                drugs = self.make_drugs_seascapes(drugs),
+                                drugs = self.drugs,
                                 add_noise = self.hp.NOISE, 
                                 noise_modifier= self.hp.NOISE_MODIFIER,
                                 average_outcomes=self.hp.AVERAGE_OUTCOMES, 
@@ -140,7 +144,7 @@ class DrugSelector:
                                 total_resistance= self.hp.TOTAL_RESISTANCE,
                                 dense=self.hp.DENSE,
                                 delay=self.hp.DELAY, 
-                                phenom=self.hp.PHENOM, seascapes = True)
+                                phenom=self.hp.PHENOM, seascapes = hp.SEASCAPES)
 
         # main model  # gets trained every step
         self.model = self.create_model()
@@ -279,6 +283,7 @@ class DrugSelector:
 
             # Update Q value for given state
             current_qs = current_qs_list[index]
+            #TODO Change to only accepting the drug
             if self.env.SEASCAPES:
                 ind = action[0]*8 + action[1] #converting tuple action to index
                 current_qs[ind] = new_q
@@ -562,10 +567,8 @@ def practice(agent, naive = False, standard_practice = False,
                 elif wf:
                     agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS)))
                 else:
-                    if agent.env.SEASCAPES:
-                        agent.env.action = random.sample(agent.env.ACTIONS, k = 1)[0]
-                    else:
-                        agent.env.action = random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS))
+                    agent.env.action = random.sample(agent.env.ACTIONS, k = 1)[0]
+
 
 
             #we don't save anything - it stays in the class
@@ -623,6 +626,7 @@ def practice(agent, naive = False, standard_practice = False,
 
         if episode % 10 == 0 and not naive and not dp_solution:
             policy = agent.compute_implied_policy(update=False)
+            #TODO Change to initially training on which drug to use, then to training on dose
             if agent.env.SEASCAPES:
                 calculated_policy = np.array([(np.floor(np.argmax(s)/8), np.argmax(s)%8) for s in policy])
             else:
