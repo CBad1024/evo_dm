@@ -7,6 +7,6 @@
 
 <!---badges end-->
 
-## Original Authors: Davis Weaver and Jeff Maltas, Cleveland Clinic Theory Division
+## Original Authors: Davis Weaver and Jeff Maltas
 
-## V2 Author: Chaaranath Badrinath, RCDS/Cleveland Clinic Thoery Division
+## V2 Author: Chaaranath Badrinath
