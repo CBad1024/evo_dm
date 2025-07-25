@@ -629,3 +629,16 @@ def test_memory_wf4(hp_wf):
         agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS), np.max(agent.env.ACTIONS)))
         agent.env.step()
         agent.update_replay_memory()
+
+
+def test_seascape_training():
+    hp = hyperparameters()
+    hp.SEASCAPES = True
+    hp.MIN_REPLAY_MEMORY_SIZE = 200
+    hp.EPISODES = 15
+    hp.drug_policy = [0 for i in range(2**hp.N)]
+    agent_ss = DrugSelector(hp=hp, drugs=define_mira_landscapes())
+    rewards_ss, agent_ss, dosage_policy_raw, V_ss = practice(agent_ss, naive=False, wf=False, train_freq=1, compute_implied_policy_bool=True)
+    dosage_policy = [int(np.argmax(i)) for i in dosage_policy_raw]
+    combined_policy = [(hp.drug_policy[i], dosage_policy[i]) for i in range(len(dosage_policy))]
+    print("Learned Policy: ", combined_policy)

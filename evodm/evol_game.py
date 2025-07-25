@@ -38,7 +38,7 @@ class evol_env:
                  starting_genotype=0,
                  dense=False, cs=False,
                  delay=0,
-                 seascapes=False):
+                 seascapes=False, drug_policy=None):
         # define switch for whether to record the state vector or fitness for the learner
         self.TRAIN_INPUT = train_input
         # define environmental variables
@@ -88,6 +88,8 @@ class evol_env:
         self.PLAYER_WCUTOFF = player_wcutoff
         self.POP_WCUTOFF = pop_wcutoff
 
+        self.drug_policy = drug_policy
+
         # define victory threshold
         self.WIN_THRESHOLD = win_threshold  # number of player actions before the game is called
         self.WIN_REWARD = win_reward
@@ -114,9 +116,9 @@ class evol_env:
         self.update_state_mem(state_vector=self.state_vector)
 
         ##Define initial fitness
-        #TODO Change here
+        #FIXME Fixed
         if self.SEASCAPES: #drugs is of form x: drug, y: concentration, z: state
-            self.fitness = [np.dot(self.drugs[self.action[0]][self.action[1]], self.state_vector)]
+            self.fitness = [np.dot(self.drugs[self.curr_drug][self.action], self.state_vector)]
         else:
             self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]
 
@@ -139,18 +141,20 @@ class evol_env:
     def define_actions(self):
         # define the action space - this is a list of integers that the agent can take
         # in the environment in the landscapes case.
-        # In the seascapes case, actions are a tuple of (dose, drug) pairs
-        #TODO Change here
+        # In the seascapes case, actions are simply the dosage used
+        #FIXME: THIS IS FIXED
         if self.SEASCAPES:
             print("Seascapes enabled")
-            self.ACTIONS = [(i, j) for i in range(len(self.drugs)) for j in range(self.num_conc)]
-            self.action = (0, 0)  # first action - value will be updated by the learner
+            self.ACTIONS = [i for i in range(self.num_conc)]
+
         else:
             self.ACTIONS = [i for i in range(self.num_drugs)]  # 0-indexed actions
-            self.action = 0  # first action - value will be updated by the learner
-            self.prev_action = 0.0  # pretend this is the second time seeing it why not
-            self.action_history.append(self.action)
 
+        self.action = 0  # first action - value will be updated by the learner
+        self.prev_action = 0
+        if self.SEASCAPES:
+            self.curr_drug = self.drug_policy[0]
+        self.action_history.append(self.action)
     def define_landscapes(self, drugs, normalize_drugs):
         # default behavior is to generate landscapes completely at random.
         # define landscapes #this step is a beast - let's pull this out into it's own function
@@ -168,7 +172,7 @@ class evol_env:
         # Normalize landscapes if directed
         if normalize_drugs:
             self.drugs = normalize_landscapes(self.drugs)
-        #TODO Change here
+        #FIXME no changes needed here (seascapes only accessed during second part of training)
         if self.SEASCAPES:
             # In this case, access a seascapes object by drug name
             self.seascapes = [None for i in range(len(self.drugs))]
@@ -198,13 +202,10 @@ class evol_env:
         self.time_step += self.NUM_EVOLS
         self.action_number += 1
         self.update_target_counter += 1
+
         #TODO : change to implement a single learner to learn drug cycling and second to learn dosing strategy
         # under seascapes the action should first be just the drug and for the second learner it should be the dose
-        if self.SEASCAPES:
-            try:
-                self.action[0]
-            except:
-                self.action = (np.floor(self.action/self.num_conc).astype(int), self.action % self.num_conc)
+
         # Run the sim under the assigned conditions
         if self.action not in self.ACTIONS:  # Check if action is valid
             raise ValueError(f"Invalid action {self.action}. Must be one of {self.ACTIONS}")
@@ -212,12 +213,12 @@ class evol_env:
         if self.SEASCAPES:
             fitness, state_vector = run_sim_ss(evol_steps=self.NUM_EVOLS,
                                             state_vector=self.state_vector,
-                                            ss=self.seascapes[self.action[0]],  # Use 0-indexed action
-                                            average_outcomes=self.AVERAGE_OUTCOMES, conc = self.action[1])
+                                            ss=self.seascapes[self.curr_drug], #FIXME we need to access the seascapes[curr_drug]
+                                            average_outcomes=self.AVERAGE_OUTCOMES, conc = self.action)#action is the concentration
         else:
             fitness, state_vector = run_sim(evol_steps=self.NUM_EVOLS,
                                         state_vector=self.state_vector,
-                                        ls=self.landscapes[self.action],  # Use 0-indexed action
+                                        ls=self.landscapes[self.action],  #action is the drug
                                         average_outcomes=self.AVERAGE_OUTCOMES)
 
         self.update_state_mem(state_vector=state_vector)
@@ -245,6 +246,8 @@ class evol_env:
         else:
             self.prev_action = float(self.action)  # type conversion
         self.action_history.append(self.action)
+        if self.SEASCAPES:
+            self.curr_drug = self.drug_policy[np.argmax(self.state_vector)]  #takes the current drug as the one with the optimal drug policy in the given state
         # done
         return
 
@@ -439,20 +442,17 @@ class evol_env:
         self.episode_number += 1
 
         # re-initialize the action number
-        #TODO: change here
-        if self.SEASCAPES:
-            self.action = (0, 0)
-        else:
-            self.action = 0  # Use 0-indexed action
+        #FIXME: changed
+        self.action = 0
 
         # re-initialize victory conditions
         self.pop_wcount = 0
         self.player_wcount = 0
         self.done = False
         # re-calculate fitness with the new state_vector
-        #TODO CHange here
-        if self.SEASCAPES:
-            self.fitness = [np.dot(self.drugs[self.action[0]][ self.action[1]], self.state_vector)]
+        #TODO Change here
+        if self.SEASCAPES: # if seascapes, we need to access drugs[curr_drug][curr_conc] where curr_conc = action
+            self.fitness = [np.dot(self.drugs[self.curr_drug][self.action], self.state_vector)] #FIXME changed for now but need to implement curr_drug
         else:
             self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]  # Use 0-indexed action
         if self.NOISE_BOOL:
@@ -503,12 +503,12 @@ def generate_landscapes2(N=4, sigma=0.5, num_drugs=4, CS=False, dense=False, cor
     return landscapes, drugs
 
 
-#TODO Change Here
+#FIXME Fixed
 def normalize_landscapes(drugs, seascapes=False):
-    #TODO Change Here
-    if seascapes:
-        for i in drugs.keys():
-            for j in drugs[i].keys():
+
+    if seascapes: #if seascapes, drugs
+        for i in range(len(drugs)): #num drugs
+            for j in range(len(drugs[i])): #num concentrations
                 drugs[i][j] = drugs[i][j] - np.min(drugs[i][j])
                 drugs[i][j] = drugs[i][j] / np.max(drugs[i][j])
         drugs_normalized = drugs

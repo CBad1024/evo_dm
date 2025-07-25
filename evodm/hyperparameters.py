@@ -37,7 +37,7 @@ class hyperparameters:
 
         self.NUM_EVOLS = 1
         self.EPISODES = 500
-        self.N = 5
+        self.N = 4
         self.RANDOM_START = False
         self.STARTING_GENOTYPE = 0  # default to starting at the wild type genotype
         self.NOISE = False  # should the sensor readings be noisy?
@@ -59,8 +59,9 @@ class hyperparameters:
 
 
         #seascapes controls
-        self.SEASCAPES = True
+        self.SEASCAPES = False
         self.NUM_CONC = 10
+        self.drug_policy = None
 
 
         # define victory conditions for player and pop

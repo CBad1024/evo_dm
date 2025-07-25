@@ -117,7 +117,8 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     hp.DELAY= int(delay)
     hp.PHENOM = phenom
     hp.MIN_REPLAY_MEMORY_SIZE = min_replay_memory_size
-    hp.SEASCAPES = seascapes
+    #maintain distinction between hp.SEASCAPES and seascapes.
+
 
     #gotta modulate epsilon decay based on the number of episodes defined
     #0.005 = epsilon_decay^episodes
@@ -136,10 +137,22 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     agent = DrugSelector(hp = hp, drugs = drugs)
     naive_agent = DrugSelector(hp=hp, drugs = drugs) #otherwise it all gets overwritten by the actual agent (changed from deepcopy(agent)
 
-
-    rewards, agent, policy, V = practice(agent, naive=False, wf=wf,
+    rewards, agent, drug_policy_raw, V = practice(agent, naive=False, wf=wf,
                                          train_freq=train_freq,
                                          compute_implied_policy_bool=compute_implied_policy_bool)  # added arg for train frequency
+
+    drug_policy = np.array([np.argmax(s) for s in drug_policy_raw]) #converts from one-hot encoding to drug ids
+    if seascapes:
+        #Train new agent with seascapes
+        hp.SEASCAPES = True
+        hp.drug_policy = drug_policy
+        agent_ss = DrugSelector(hp=hp, drugs=define_mira_landscapes())
+        rewards_ss, agent_ss, dosage_policy_raw, V_ss = practice(agent_ss, naive=False, wf=False, train_freq=1,
+                                                                 compute_implied_policy_bool=True)
+    else:
+        rewards_ss, agent_ss, dosage_policy, V_ss = [], [], [], []
+
+
 
     #run the agent in the naive case and then in the reg case
     naive_rewards, naive_agent, naive_policy, V = practice(naive_agent, naive = True, 
@@ -164,7 +177,7 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     dp_policy = None
     dp_V = None
     return [rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards,
-            dp_policy, naive_policy, policy, dp_V]
+            dp_policy, naive_policy, drug_policy, dp_V, rewards_ss, agent_ss, dosage_policy, V_ss]
 
 def load_agent(savepath):
     file = open(savepath, 'rb')

@@ -144,7 +144,7 @@ class DrugSelector:
                                 total_resistance= self.hp.TOTAL_RESISTANCE,
                                 dense=self.hp.DENSE,
                                 delay=self.hp.DELAY, 
-                                phenom=self.hp.PHENOM, seascapes = hp.SEASCAPES)
+                                phenom=self.hp.PHENOM, seascapes = hp.SEASCAPES, drug_policy = hp.drug_policy)
 
         # main model  # gets trained every step
         self.model = self.create_model()
@@ -283,12 +283,8 @@ class DrugSelector:
 
             # Update Q value for given state
             current_qs = current_qs_list[index]
-            #TODO Change to only accepting the drug
-            if self.env.SEASCAPES:
-                ind = action[0]*8 + action[1] #converting tuple action to index
-                current_qs[ind] = new_q
-            else:
-                current_qs[action] = new_q
+
+            current_qs[action] = new_q
 
             # And append to our training data
             X.append(current_state)
@@ -520,6 +516,11 @@ def practice(agent, naive = False, standard_practice = False,
     #ep_rewards = []
     count=1
     num_experiences = 0
+
+    if agent.env.SEASCAPES:
+        pass
+    else:
+        pass
     for episode in tqdm(range(1, agent.hp.EPISODES + 1), ascii=True, unit='episodes',
                         disable = True if any([dp_solution, naive, pre_trained]) else False):
         # Restarting episode - reset episode reward and step number
@@ -627,10 +628,8 @@ def practice(agent, naive = False, standard_practice = False,
         if episode % 10 == 0 and not naive and not dp_solution:
             policy = agent.compute_implied_policy(update=False)
             #TODO Change to initially training on which drug to use, then to training on dose
-            if agent.env.SEASCAPES:
-                calculated_policy = np.array([(np.floor(np.argmax(s)/8), np.argmax(s)%8) for s in policy])
-            else:
-                calculated_policy = np.array([np.argmax(s) for s in policy])
+            # Calculated policy holds for even when the action is dose and not drug
+            calculated_policy = np.array([np.argmax(s) for s in policy])
             print("Episode ", episode, "| calculated policy: ", calculated_policy, " | epsilon: ", agent.hp.epsilon, " | fitness: ", np.mean(agent.env.fitness), " | loss: ", losses_list[-1])
 
         # reset environment for next iteration

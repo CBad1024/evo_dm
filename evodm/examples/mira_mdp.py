@@ -10,6 +10,7 @@ import pandas as pd
 import logging
 import datetime as dt
 import builtins
+from evodm.landscapes import Seascape
 
 # Set up logging
 timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -153,6 +154,58 @@ def main(mdp = False, rl = False):
     # print(RL_N_results.to_string())
     # print("\nAverage fitness under RL_N policy:", RL_N_results['fitness'].mean())
 
+
+
+def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
+    '''
+    Currently only works for a SSWM problem
+    Args:
+        policy:
+        drugs:
+        num_episodes:
+        episode_length:
+
+    Returns:
+
+    '''
+    ss = [Seascape(N=4, ls_max=drug, sigma = 0.5) for drug in drugs]
+
+    episode_numbers = []
+    states = []
+    actions = []
+    fitnesses = []
+    time_steps = []
+    for i in range(num_episodes):
+
+        state = 0  # Initial state vector
+        action = None
+        fitness = 0
+        for j in range(episode_length):
+
+            action = policy[state]
+            fitness = ss[action[0]].ss[action[1]][state]
+
+            states.append(state)
+            actions.append(action)
+            fitnesses.append(fitness)
+
+            state = np.argmax(ss[action[0]].get_TM(action[1])[state])
+            time_steps.append(j)
+
+            episode_numbers.append(i)
+
+    results_df = pd.DataFrame({"Episode": episode_numbers,  "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
+    return results_df
+
+
+
+
+
+
+
+
+
+
 def run_mdp(envdp, env):
     # --- Solve the MDP using different algorithms ---
     print("\nSolving MDP with Backwards Induction (Finite Horizon)...")
@@ -193,21 +246,15 @@ def run_rl(env, envdp):
     num_episodes = 400
     batch_size = 256
 
-    # # TESTING PURPOSES ONLY
-    # hp = hyperparameters()
-    # hp.N = v_N
-    # a = DrugSelector(hp, define_mira_landscapes())
-    # policy = [(0, 0) for i in range(2**v_N)]
-    # test_results = get_sequences(policy, a.env, finite_horizon=False)
-    # print(test_results.to_string())
-    # print("\nAverage fitness under this policy:", test_results['fitness'].mean())
+
 
     hp = hyperparameters()
+    hp.SEASCAPES = False
     hp.N = v_N
     hp.mira = v_mira
     hp.num_episodes = num_episodes
     hp.batch_size = batch_size
-    rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards, dp_policy, naive_policy, policy, dp_V = evol_deepmind(savepath = None, num_evols = 1, N = v_N, episodes = num_episodes,
+    rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards, dp_policy, naive_policy, policy, dp_V, rewards_ss, agent_ss, dosage_policy_raw, V_ss = evol_deepmind(savepath = None, num_evols = 1, N = v_N, episodes = num_episodes,
                   reset_every = 20, min_epsilon = 0.005,
                   train_input = "state_vector",  random_start = False,
                   noise = False, noise_modifier = 1, num_drugs = v_drugs,
@@ -225,20 +272,23 @@ def run_rl(env, envdp):
                   starting_genotype = 0, train_freq = 1,
                   compute_implied_policy_bool = True,
                   dense = False, master_memory = True,
-                  delay = 0, phenom = 1, min_replay_memory_size = 1000, seascapes = False)
+                  delay = 0, phenom = 1, min_replay_memory_size = 1000, seascapes = True)
 
     print(":: RETURNED POLICY ", np.array(policy))
-    format_policy = np.array([np.argmax(s) for s in policy])
+    drug_policy = np.array([np.argmax(s) for s in policy])
     print("policy shape under non-naive RL: ", np.array(policy).shape)
-    print("final policy", format_policy)
-
-    print("\nQ-table: ", agent.q_table())
+    dosage_policy = np.array([np.argmax(s) for s in dosage_policy_raw])
+    final_policy = [(int(drug_policy[i]), int(dosage_policy[i])) for i in range(len(drug_policy))]
+    print("Final policy (drug, dosage): ", final_policy)
+    print("\nDrug agent Q-table: ", agent.q_table())
+    print("\nDose agent Q-table: ", agent_ss.q_table())
 
     print("\nSimulating policy from Non-naive RL...")
-    RL_NN_results = get_sequences(format_policy, env, num_episodes = 10, episode_length=envdp.nS, finite_horizon=False)
+    RL_NN_results = run_sim_seascape(final_policy, np.array(define_mira_landscapes()))
     print("RL NN results:")
     print(RL_NN_results.to_string())
     print("\nAverage fitness under RL_NN policy:", RL_NN_results['fitness'].mean())
+
 
 if __name__ == "__main__":
     main(mdp = False, rl = True)

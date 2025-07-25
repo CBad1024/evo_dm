@@ -967,18 +967,9 @@ class Seascape(Landscape):
                 adjFit = np.array([self.ss[conc, j] for j in
                                    adjMut])  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
-                fitter = np.nonzero(adjFit - self.ss[conc, i] > 0)[0]
+                fittest = adjMut[np.argmax(adjFit)]  # Find the most fit mutation
+                TM[i, fittest] = 1
 
-                fitLen = len(fitter)
-                if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
-                    TM[i, i] = 1
-                else:
-                    dfit = np.power(adjFit - self.ss[conc, i], 0)
-                    prob_mut = np.divide(dfit, np.sum(dfit))
-                    count = 0
-                    for f in fitter:
-                        TM[adjMut[f], i] = 1/len(fitter)
-                        count += 1
             TMs.append(TM)
         return np.array(TMs)
 
