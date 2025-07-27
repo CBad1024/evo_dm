@@ -926,18 +926,18 @@ class Seascape(Landscape):
 
 
         elif ls_max is not None:
-            #assume the provided landscape is the maximum dosage landscape
+            #assume the provided landscape is the minimum nonzero dosage landscape
             self.ss = np.zeros((len(self.concentrations), 2**N))
 
-            self.ss[0, :] = ls_max # set the first concentration to the provided landscape
+            self.ss[len(self.concentrations)-2, :] = ls_max # set the smallest nonzero concentration to the provided landscape
             ## Now we can generate hill equations for each genotype and extend to all concentrations
 
-            self.ss[-1, :] = self.ss[0, :]*(1+np.exp((self.ic50s - np.log10(ls_max))/hill_coeff))
+            self.ss[-1, :] = self.ss[len(self.concentrations)-2, :]*(1+np.exp(-(np.log10(self.ic50s) - np.log10(self.concentrations[len(self.concentrations)-2]))/hill_coeff))
 
-            for i in range(1, len(concentrations)-1):
+            for i in range(len(concentrations)-2):
                 for j in range(2 ** N):
                     # using seascapes as defined by Eshan King's paper
-                    self.ss[i, j] = self.ss[-1, j] / (1 + np.exp((self.ic50s[j] - np.log10(i)) / hill_coeff))
+                    self.ss[i, j] = self.ss[-1, j] / (1 + np.exp(-(np.log10(self.ic50s[j]) - np.log10(self.concentrations[i])) / hill_coeff))
 
         else:
             self.ss = ss
@@ -968,7 +968,10 @@ class Seascape(Landscape):
                                    adjMut])  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
                 fittest = adjMut[np.argmax(adjFit)]  # Find the most fit mutation
-                TM[i, fittest] = 1
+                if fittest < self.ss[conc, i]:  # If the most fit mutation is less fit than the current genotype, stay in the current genotype.
+                    TM[i, i] = 1
+                else:
+                    TM[i, fittest] = 1
 
             TMs.append(TM)
         return np.array(TMs)
@@ -1093,25 +1096,46 @@ class Seascape(Landscape):
         T_Tensor = np.array(T_Tensor)
         return T_Tensor[curr_conc]  # Return the occupation probabilities for the specified concentration
 
-    def vector_power(self, v, p):
+    def visualize_genotype_fitness(self):
         """
-        Raises a vector v to the power p, where p is an integer. This is
-        equivalent to multiplying the vector by itself p times.
+        Visualizes the seascape by plotting the fitness landscape for each concentration.
         """
-        if p == 0:
-            return np.ones_like(v)
-        elif p < 0:
-            raise ValueError("Power must be non-negative")
-        else:
-            result = v.copy()
-            for _ in range(p - 1):
-                result = np.multiply(result, v)
-            return result
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+
+        ax.set_yscale("log")
+        for i, conc in enumerate(self.concentrations):
+            ax.plot(self.ss[i], label=f'Concentration: {conc}')
+        ax.set_xlabel('Genotype Index')
+        ax.set_ylabel('Fitness')
+        ax.set_title('Fitness Seascape')
+        ax.legend()
+        plt.show()
+
+    def visualize_concentration_effects(self):
+        """
+        Visualizes the effect of different concentrations on the fitness landscape.
+        """
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+
+        ax.set_xscale("log")
+        for i in range(2**self.N):
+            gen = bin(i)[2:].zfill(self.N)
+            ax.plot(self.concentrations, self.ss[:, i], label=f'Genotype: {gen}')
+        ax.set_xlabel('Concentration')
+        ax.set_ylabel('Fitness')
+        ax.set_title('Fitness Seascape')
+        ax.legend()
+        plt.show()
 
 
+class SeascapeFamily():
+    def __init__(self, seascapes):
+        self.seascapes = seascapes # List of Seascape objects
 
-
-
+    def visualize_(self):
+        pass
 
 
 

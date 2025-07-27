@@ -243,7 +243,7 @@ def run_rl(env, envdp):
     v_N = 4
     v_mira = True
     v_drugs = 15
-    num_episodes = 400
+    num_episodes = 350
     batch_size = 256
 
 
@@ -275,7 +275,7 @@ def run_rl(env, envdp):
                   delay = 0, phenom = 1, min_replay_memory_size = 1000, seascapes = True)
 
     print(":: RETURNED POLICY ", np.array(policy))
-    drug_policy = np.array([np.argmax(s) for s in policy])
+    drug_policy=policy
     print("policy shape under non-naive RL: ", np.array(policy).shape)
     dosage_policy = np.array([np.argmax(s) for s in dosage_policy_raw])
     final_policy = [(int(drug_policy[i]), int(dosage_policy[i])) for i in range(len(drug_policy))]
@@ -287,7 +287,7 @@ def run_rl(env, envdp):
     RL_NN_results = run_sim_seascape(final_policy, np.array(define_mira_landscapes()))
     print("RL NN results:")
     print(RL_NN_results.to_string())
-    print("\nAverage fitness under RL_NN policy:", RL_NN_results['fitness'].mean())
+    print("\nAverage fitness under RL_NN policy:", RL_NN_results['Fitness'].mean())
 
 
 if __name__ == "__main__":

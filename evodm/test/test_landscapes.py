@@ -1,4 +1,6 @@
 import pytest
+
+from build.lib.evodm import define_mira_landscapes
 from evodm.landscapes import *
 
 @pytest.fixture
@@ -153,3 +155,10 @@ def test_define_adjMutN5i0jump5(ls_N5):
 
 def test_find_max_indices():
     ls = Landscape(N=4, sigma = 0.5, num_jumps = 1)
+
+def test_seascape_visualizer():
+    ss = [Seascape(N=4, sigma=0.5, ls_max=drug) for drug in define_mira_landscapes()]
+    print(ss[0].ss[:, 0])
+
+    for s in ss:
+        s.visualize_concentration_effects()

@@ -182,7 +182,7 @@ class evol_env:
                                                 sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations)
 
                 # precompute the transition matrices
-                [self.seascapes[i].get_TM_phenom(phenom=self.PHENOM)]
+                [self.seascapes[i].get_TM()]#FIXME change to phenom
 
         else:
             self.landscapes = [Landscape(ls=i, N=self.N, sigma=self.sigma,
@@ -191,7 +191,7 @@ class evol_env:
             #    [i.get_TM_phenom(phenom = self.PHENOM) for i in self.landscapes]
             # else:
             #    [i.get_TM() for i in self.landscapes] #pre-compute TM
-            [i.get_TM_phenom(phenom=self.PHENOM) for i in self.landscapes]
+            [i.get_TM() for i in self.landscapes]
 
         return
 
@@ -538,7 +538,7 @@ def discretize_state(state_vector):
     new_states[state] = 1
     return new_states
 
-def run_sim_ss(evol_steps, ss, state_vector, average_outcomes=False, conc = 0):
+def run_sim_ss(evol_steps, ss, state_vector, average_outcomes=False, conc = 0, wf = False):
     '''
     Function to progress evolutionary simulation forward n times steps in a given fitness regime defined by action under
     a seascape
@@ -560,14 +560,15 @@ def run_sim_ss(evol_steps, ss, state_vector, average_outcomes=False, conc = 0):
     for i in range(evol_steps):
         # This is the fitness of the population when the drug is selected to be used.
         if not average_outcomes:
-            state_vector = discretize_state(state_vector)
+            if wf:
+                state_vector = discretize_state(state_vector)
 
         reward.append(np.dot(ss.ss[conc], state_vector))
 
         # Performs a single evolution step - TM should be stored in the landscape object
         state_vector = ss.evolve(1, curr_conc = conc, p0=state_vector)
 
-    if not average_outcomes:
+    if not average_outcomes and wf:#FIXME change this back to being even if phenom is the case
         state_vector = discretize_state(state_vector)  # discretize again before sending it back
 
     reward = np.squeeze(reward)

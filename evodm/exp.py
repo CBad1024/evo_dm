@@ -147,10 +147,13 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
         hp.SEASCAPES = True
         hp.drug_policy = drug_policy
         agent_ss = DrugSelector(hp=hp, drugs=define_mira_landscapes())
-        rewards_ss, agent_ss, dosage_policy_raw, V_ss = practice(agent_ss, naive=False, wf=False, train_freq=1,
+        rewards_ss, agent_ss, dosage_policy, V_ss = practice(agent_ss, naive=False, wf=False, train_freq=1,
                                                                  compute_implied_policy_bool=True)
     else:
-        rewards_ss, agent_ss, dosage_policy, V_ss = [], [], [], []
+        rewards_ss = []
+        agent_ss = []
+        dosage_policy = []
+        V_ss = []
 
 
 
