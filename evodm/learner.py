@@ -200,6 +200,8 @@ class DrugSelector:
         model.compile(loss="mse", optimizer=Adam(learning_rate=self.hp.LEARNING_RATE), metrics=['accuracy'])
         return model
 
+
+
     def update_replay_memory(self):
         
         if self.env.action_number > 1 + self.hp.DELAY:
@@ -418,7 +420,10 @@ class DrugSelector:
             return "error in get_qs()"
 
         return self.model.predict(tens, verbose = 0)[0]
-    
+
+
+
+
 def compute_optimal_policy(agent, discount_rate = 0.99, num_steps = 20):
     '''
     Function to compute optimal policy based on reinforcement learning problem defined by the class DrugSelector

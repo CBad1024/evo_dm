@@ -346,7 +346,7 @@ class evol_env:
 
         return np.mean(fitnesses)
 
-    def calc_reward(self, fitness, total_resistance=False):
+    def calc_reward(self, fitness, total_resistance=False, seascapes=False):
         # okay so if fitness is low - this number will be higher
         # "winning" the game is associated with a huge reward while losing a huge penalty
 
@@ -361,7 +361,10 @@ class evol_env:
                 # CHANGE: reward is negative of fitness
                 #np.exp(1 - fit) - 1
                 diversity_bonus = self.compute_diversity_bonus(self.action_history)
+
                 reward = 2*(np.exp(1 - fitness) - 0.5) - diversity_bonus
+                if seascapes:
+                    reward -= np.log10(self.action)/6 #penalize for high concentrations
         else:
             if self.pop_wcount >= self.WIN_THRESHOLD:
                 reward = -self.WIN_REWARD
@@ -714,6 +717,8 @@ def define_mira_landscapes(as_dict=False):
 # Could have defined this in-line but made it a separate function in case we want to make it
 # more sophisticated in the future.
 
+
+#FIXME change evol_env_wf to inherit from gym.env and then make compatible with tianshou
 class evol_env_wf:
     def __init__(self, N=4, num_drugs=15, train_input='state_vector', pop_size=10000,
                  gen_per_step=2, mutation_rate=1e-6, hgt_rate=1e-5,
@@ -774,6 +779,7 @@ class evol_env_wf:
                         range(self.NUM_DRUGS)]  # action space -no plus one because it was really really dumb
 
         self.done = False
+        self.pop_counts = []
 
     def update_sensor(self, pop):
         # this is creating a stacked data structure where each time point provides
@@ -832,6 +838,7 @@ class evol_env_wf:
         self.prev_action = float(self.action)
         self.state_vector = self.convert_state_vector(sv=self.pop)
         self.fitness = self.compute_pop_fitness(drug=self.drug, sv=self.pop)
+        self.pop_counts.append(self.pop.copy())
 
     # reset the environment after an 'episode'
     def reset(self):
@@ -849,10 +856,11 @@ class evol_env_wf:
         self.drug = self.drugs[self.action]
         self.state_vector = self.convert_state_vector(sv=self.pop)
         self.fitness = self.compute_pop_fitness(drug=self.drug, sv=self.pop)
+        self.pop_counts = []
 
     def time_step(self):
         self.mutation_step()
-        self.hgt_event()
+        # self.hgt_event()
         self.offspring_step()
 
     def mutation_step(self):
@@ -989,3 +997,24 @@ class evol_env_wf:
             H += (allele_proportion * math.log(allele_proportion))
 
         return -H
+
+    def visualize_pop_counts(self):
+        """
+        Function to display the counts of each genotype in the population.
+        """
+        import matplotlib.pyplot as plt
+
+        haplotypes = list(self.pop.keys())
+
+
+
+        fig, ax = plt.subplots()
+        x = np.arange(len(self.pop_counts))
+        for haplotype in haplotypes:
+            ax.plot(x,[self.pop_counts[i][haplotype] for i in range(len(self.pop_counts))], label=haplotype)
+        plt.xlabel('Time Steps')
+        plt.ylabel('Counts')
+        plt.title('Population Counts of Each Haplotype')
+        plt.tight_layout()
+        plt.legend()
+        plt.show()

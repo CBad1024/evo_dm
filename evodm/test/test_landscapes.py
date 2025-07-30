@@ -161,4 +161,5 @@ def test_seascape_visualizer():
     print(ss[0].ss[:, 0])
 
     for s in ss:
+        s.visualize_genotype_fitness()
         s.visualize_concentration_effects()

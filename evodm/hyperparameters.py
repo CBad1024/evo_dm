@@ -52,10 +52,10 @@ class hyperparameters:
 
         # wright-fisher controls
         self.WF = False
-        self.POP_SIZE = 10000
+        self.POP_SIZE = 100000
         self.GEN_PER_STEP = 1
         self.MUTATION_RATE = 1e-5
-        self.HGT_RATE = 1e-5
+        self.HGT_RATE = 0
 
 
         #seascapes controls
