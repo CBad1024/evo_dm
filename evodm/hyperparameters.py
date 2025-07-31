@@ -35,8 +35,9 @@ class hyperparameters:
         # new evolutionary "game" every n steps or n *num_evols total evolutionary movements
         self.RESET_EVERY = 20
 
+
         self.NUM_EVOLS = 1
-        self.EPISODES = 500
+        self.EPISODES = 60
         self.N = 4
         self.RANDOM_START = False
         self.STARTING_GENOTYPE = 0  # default to starting at the wild type genotype

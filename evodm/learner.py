@@ -1,8 +1,11 @@
 # this file will define the learner class, along with required methods -
 # we are taking inspiration (and in some cases borrowing heavily) from the following
 # tutorial: https://pythonprogramming.net/training-deep-q-learning-dqn-reinforcement-learning-python-tutorial/?completed=/deep-q-learning-dqn-reinforcement-learning-python-tutorial/
+import os
+
 import tensorflow as tf
 import keras
+import torch
 from keras.models import Sequential, Model
 from keras.layers import Dense, Dropout, Conv1D, MaxPooling1D, Flatten
 from keras.optimizers import Adam
@@ -11,7 +14,7 @@ from tensorflow.python.keras.saving import saving_utils
 from keras.regularizers import L2
 from keras.utils import to_categorical
 from collections import deque
-from evodm.evol_game import evol_env, evol_env_wf
+from evodm.evol_game import evol_env, evol_env_wf, wf_env
 from evodm.dpsolve import backwards_induction, dp_env
 from evodm.hyperparameters import hyperparameters
 import random
@@ -19,8 +22,19 @@ import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
 
-from evodm.landscapes import Seascape
+from torch import nn
+from torch.optim import Adam
+from tianshou.env import DummyVectorEnv
+from tianshou.policy import PPOPolicy
+from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.trainer import OnpolicyTrainer
+from tianshou.utils.net.discrete import Actor, Critic
+from tianshou.utils.net.common import Net
+from tianshou.utils import TensorboardLogger
+from torch.utils.tensorboard import SummaryWriter
 
+from evodm.landscapes import Seascape
+from itertools import chain
 
 # Function to set hyperparameters for the learner - just edit this any time you
 # want to screw around with them.
@@ -658,5 +672,103 @@ def practice(agent, naive = False, standard_practice = False,
         V = []
     return reward_list, agent, policy, V
 
+def practice_WF(hp : hyperparameters):
+    def make_env():
+        return wf_env()
+
+    train_envs = DummyVectorEnv([make_env for _ in range(4)])
+    test_envs = DummyVectorEnv([make_env for _ in range(2)])
 
 
+
+    # Model and optimizer
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    #Make a Net, actor and critic agents
+    net = Net(
+        state_shape=2**hp.N,
+        hidden_sizes=[128, 128],
+        device=device
+    )
+
+    actor = Actor(
+        preprocess_net=net,
+        action_shape=hp.NUM_DRUGS,
+        hidden_sizes=[],
+        device=device
+    ).to(device)
+
+    critic = Critic(
+        preprocess_net=Net(state_shape=2**hp.N, hidden_sizes=[128, 128], device=device),
+        hidden_sizes=[],
+        device=device
+    ).to(device)
+
+    actor_optim = Adam(actor.parameters(), lr=hp.LEARNING_RATE)
+    critic_optim = Adam(critic.parameters(), lr=hp.LEARNING_RATE)
+
+    policy = PPOPolicy(actor = actor, critic = critic, optim = torch.optim.Adam(chain(actor.parameters(), critic.parameters()), lr=hp.LEARNING_RATE), dist_fn=torch.distributions.Categorical,
+    action_space=train_envs.get_env_attr("action_space")[0],
+    discount_factor=0.99,
+    max_grad_norm=0.5,
+    vf_coef=0.5,
+    ent_coef=0.01,
+    gae_lambda=0.95,
+    reward_normalization=False,
+    action_scaling=False,
+    deterministic_eval=False,
+    dual_clip=None,
+    value_clip=True,)
+
+    # Replay buffer and collectors
+    train_collector = Collector(policy, train_envs, VectorReplayBuffer(hp.REPLAY_MEMORY_SIZE, 4))
+    test_collector = Collector(policy, test_envs)
+
+    # Warm-up collection
+    train_collector.reset()
+    train_collector.collect(n_step=hp.MINIBATCH_SIZE * 10)
+
+    # Logger
+    log_path = "./log/wf_ppo"
+    os.makedirs(log_path, exist_ok=True)
+    writer = SummaryWriter(log_path)
+    logger = TensorboardLogger(writer)
+
+    test_episodes = 10  # Number of episodes to test after training
+
+    # Training
+    trainer = OnpolicyTrainer(
+        policy=policy,
+        max_epoch=hp.EPISODES,
+        batch_size=hp.MINIBATCH_SIZE,
+        train_collector=train_collector,
+        test_collector=test_collector,
+        step_per_epoch=5000,
+        repeat_per_collect=4,  # <- recommended value for PPO
+        episode_per_test=test_episodes,
+        step_per_collect=64 * 10,
+        train_fn=lambda epoch, env_step: None,
+        test_fn=lambda epoch, env_step: None,
+        stop_fn=lambda mean_rewards: mean_rewards >= -1.0,
+        save_best_fn=save_best_fn,  # ✅ save best model
+        logger=logger,
+    )
+
+    result = trainer.run()
+    print(f'Training finished with result: {result}')
+
+    # Testing
+    test_result = test_collector.collect(n_episode=test_episodes)
+    print(f'Final testing result: {test_result}')
+
+
+
+
+def save_best_fn(policy):
+    # Logger
+    log_path = "./log/wf_ppo"
+    os.makedirs(log_path, exist_ok=True)
+    writer = SummaryWriter(log_path)
+    logger = TensorboardLogger(writer)
+
+    torch.save(policy.state_dict(), os.path.join(log_path, 'best_policy.pth'))

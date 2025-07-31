@@ -3,7 +3,7 @@ import sys
 
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
 from evodm.evol_game import define_mira_landscapes, evol_env
-from evodm.learner import DrugSelector, hyperparameters, practice
+from evodm.learner import DrugSelector, hyperparameters, practice, practice_WF
 from evodm.exp import evol_deepmind
 import numpy as np
 import pandas as pd
@@ -111,7 +111,7 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
     return results_df
 
 
-def main(mdp = False, rl = False):
+def main(mdp = False, rl = False, wf_test = False):
     """
     Main function to solve the MIRA MDP and evaluate the policies.
     """
@@ -123,6 +123,8 @@ def main(mdp = False, rl = False):
         run_mdp(envdp, env)
     if rl:
         run_rl(env, envdp)
+    if wf_test:
+        wf_run()
 
 
 
@@ -201,34 +203,36 @@ def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
 
 
 
-def run_sim_wf(env, policy, drugs, num_episodes=10, episode_length=20):
-    """
-    Simulates the environment for a number of episodes using a given policy.
+# def run_sim_wf(env, policy, drugs, num_episodes=10, episode_length=20):
+#     """
+#     Simulates the environment for a number of episodes using a given policy.
+#
+#     Args:
+#         env: the evol_env_wf environment
+#         policy (np.array): The policy to follow.
+#         drugs (list): List of drug landscapes.
+#         num_episodes (int): The number of simulation episodes.
+#         episode_length (int): The length of each episode.
+#
+#     Returns:
+#         pd.DataFrame: A dataframe containing the simulation history.
+#     """
+#
+#     for i in range(num_episodes):
+#         env.reset()
+#         for j in range(episode_length):
+#             current_state_index = np.argmax(env.state_vector)
+#             action_opt = policy[current_state_index]
+#
+#             # evol_env now expects 0-indexed actions
+#             env.action = int(action_opt) if not env.SEASCAPES else action_opt
+#             env.step()
+#
+#
+#     return results_df
 
-    Args:
-        env: the evol_env_wf environment
-        policy (np.array): The policy to follow.
-        drugs (list): List of drug landscapes.
-        num_episodes (int): The number of simulation episodes.
-        episode_length (int): The length of each episode.
-
-    Returns:
-        pd.DataFrame: A dataframe containing the simulation history.
-    """
-
-    for i in range(num_episodes):
-        env.reset()
-        for j in range(episode_length):
-            current_state_index = np.argmax(env.state_vector)
-            action_opt = policy[current_state_index]
-
-            # evol_env now expects 0-indexed actions
-            env.action = int(action_opt) if not env.SEASCAPES else action_opt
-            env.step()
-
-
-    return results_df
-
+def wf_run():
+    practice_WF(hyperparameters())
 
 
 
@@ -317,4 +321,4 @@ def run_rl(env, envdp):
 
 
 if __name__ == "__main__":
-    main(mdp = False, rl = True)
+    main(mdp = False, rl = False, wf_test = True)
