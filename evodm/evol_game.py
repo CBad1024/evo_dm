@@ -1,4 +1,5 @@
 from gymnasium import spaces
+from tianshou.env import DummyVectorEnv
 
 from .landscapes import Landscape, Seascape
 import numpy as np
@@ -723,159 +724,72 @@ def define_mira_landscapes(as_dict=False):
 
 #FIXME change evol_env_wf to inherit from gym.env and then make compatible with tianshou
 
-class wf_env(gym.Env):
-    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, gen_per_step=25, total_generations=1000, drug_landscapes = define_mira_landscapes(), seascapes = False):
-        super(wf_env, self).__init__()
+class WrightFisherEnv(gym.Env):
+    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, switch_interval=25, total_generations=1000):
+        super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size
         self.seq_length = seq_length
         self.mutation_rate = mutation_rate
-        self.gen_per_step = gen_per_step
+        self.switch_interval = switch_interval
         self.total_generations = total_generations
-        self.seascapes = seascapes
+        self.genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.seq_length)]
 
-        # Define action and observation space
-        # Action space: 0 for no drug, 1 for drug A, 2 for drug B, etc.
-        self.action_space = spaces.Discrete(len(drug_landscapes))
-        self.drug_landscapes = drug_landscapes
+        # Drug data
+        self.drug_landscapes = define_mira_landscapes()
+        self.num_drugs = len(self.drug_landscapes)
+
+        # Action space: choosing one of the drugs
+        self.action_space = spaces.Discrete(self.num_drugs)
 
         # Observation space: genotype frequencies
-        self.observation_space = spaces.Box(low=0, high=1, shape=(2**seq_length,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(len(self.genotypes),), dtype=np.float32)
 
         # State initialization
-        self.N = seq_length #number of possible mutations
-        self.pop = np.zeros(2**self.N)
+        self.pop = {}
         self.current_drug = 0
-        self.current_dose = 0
         self.generation = 0
         self.reset()
-        self.steps_elapsed = 0
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.pop = np.zeros(2**self.N)
-        self.pop[0] = self.pop_size
+        self.pop = {'0' * self.seq_length: self.pop_size}
         self.generation = 0
         self.current_drug = 0
         obs = self._get_obs()
         return obs, {}
 
+
     def step(self, action):
-        if self.seascapes:
-            self.current_dose = action
-        else:
-            self.current_drug = action
+        self.current_drug = action
+        fitness = {geno: self.drug_landscapes[action][i] for i, geno in enumerate(self.genotypes)}
 
-        fitness = np.array([self.drug_landscapes[self.current_drug][state] for state in range(2**self.N)])
-
-        for _ in range(self.gen_per_step):
+        for _ in range(self.switch_interval):
             self.time_step(fitness)
             self.generation += 1
             if self.generation >= self.total_generations:
                 break
 
         obs = self._get_obs()
-        avg_fit = np.sum((self.pop / self.pop_size) * fitness)
-        # print(avg_fit)
-        reward = -float(avg_fit)
+        avg_fit = sum((self.pop.get(g, 0) / self.pop_size) * fitness[g] for g in self.genotypes)
+        reward = 1-avg_fit
 
         terminated = self.generation >= self.total_generations
         truncated = False  # Gymnasium requires this explicitly
         info = {'avg_fitness': avg_fit}
-        self.steps_elapsed += 1
 
         return obs, reward, terminated, truncated, info
 
-    # def step(self, action):
-    #     """Debug version to check landscape structure"""
-    #
-    #     print(f"=== DEBUGGING STEP ===")
-    #     print(f"Action: {action}")
-    #     print(f"Seq length: {self.seq_length}")
-    #     print(f"N (mutations): {self.N}")
-    #     print(f"Expected states: {2 ** self.N}")
-    #     print(f"Action space size: {self.action_space.n}")
-    #
-    #     # Check drug landscapes structure
-    #     # print(f"Drug landscapes keys: {list(self.drug_landscapes.keys())}")
-    #     print(f"Current drug (action): {action}")
-    #
-    #
-    #     current_landscape = self.drug_landscapes[action]
-    #     print(f"Current landscape type: {type(current_landscape)}")
-    #     print(
-    #         f"Current landscape length: {len(current_landscape) if hasattr(current_landscape, '__len__') else 'No length'}")
-    #         # if hasattr(current_landscape, '__len__'):
-    #             # print(
-    #                 # f"Landscape values sample: {list(current_landscape.values())[:10] if hasattr(current_landscape, 'values') else current_landscape[:10]}")
-    #             # print(
-    #             #     f"Landscape min/max: {min(current_landscape.values()) if hasattr(current_landscape, 'values') else min(current_landscape)}, {max(current_landscape.values()) if hasattr(current_landscape, 'values') else max(current_landscape)}")
-    #
-    #
-    #     # Original step logic
-    #     if self.seascapes:
-    #         self.current_dose = action
-    #     else:
-    #         self.current_drug = action
-    #
-    #     # Check how fitness is being constructed
-    #     print(f"Constructing fitness array for states 0 to {2 ** self.N - 1}")
-    #
-    #     try:
-    #         fitness_list = []
-    #         for state in range(2 ** self.N):
-    #             fit_val = self.drug_landscapes[self.current_drug][state]
-    #             fitness_list.append(fit_val)
-    #             if state < 5:  # Print first 5 for debugging
-    #                 print(f"  State {state}: fitness = {fit_val}")
-    #
-    #         fitness = np.array(fitness_list, dtype=np.float64)
-    #         print(f"Fitness array shape: {fitness.shape}")
-    #         print(f"Fitness array min/max: {np.min(fitness)}, {np.max(fitness)}")
-    #
-    #     except Exception as e:
-    #         print(f"ERROR constructing fitness array: {e}")
-    #         return None, 0, True, False, {}
-    #
-    #     # Continue with normal step...
-    #     for _ in range(self.gen_per_step):
-    #         self.time_step(fitness)
-    #         self.generation += 1
-    #         if self.generation >= self.total_generations:
-    #             break
-    #
-    #     obs = self._get_obs()
-    #     frequencies = self.pop / self.pop_size
-    #
-    #     print(f"Population sum: {np.sum(self.pop)}")
-    #     print(f"Frequencies sum: {np.sum(frequencies)}")
-    #     print(f"Non-zero frequencies: {np.sum(frequencies > 0)}")
-    #
-    #     # Detailed reward calculation
-    #     weighted_fitness = frequencies * fitness
-    #     print(f"Weighted fitness range: [{np.min(weighted_fitness)}, {np.max(weighted_fitness)}]")
-    #     print(f"Weighted fitness sum: {np.sum(weighted_fitness)}")
-    #
-    #     avg_fit = np.sum(weighted_fitness)
-    #     reward = float(-avg_fit)
-    #
-    #     print(f"Average fitness: {avg_fit}")
-    #     print(f"Final reward: {reward}")
-    #     print("========================")
-    #
-    #     terminated = self.generation >= self.total_generations
-    #     truncated = False
-    #     info = {'avg_fitness': float(avg_fit)}
-    #     self.steps_elapsed += 1
-    #
-    #     return obs, reward, terminated, truncated, info
+
+    def _get_obs(self):
+        freqs = np.array([self.pop.get(geno, 0) for geno in self.genotypes]) / self.pop_size
+        return freqs.astype(np.float32)
+
+    def get_obs(self):
+        return self._get_obs()
 
     def time_step(self, fitness):
         self.mutation_step()
         self.offspring_step(fitness)
-
-    def _get_obs(self):
-        freqs = self.pop / self.pop_size
-        return freqs.astype(np.float64)
 
     def mutation_step(self):
         mutation_count = np.random.poisson(self.mutation_rate * self.pop_size * self.seq_length)
@@ -884,40 +798,49 @@ class wf_env(gym.Env):
             if self.pop[haplotype] > 1:
                 self.pop[haplotype] -= 1
                 mutant = self.get_mutant(haplotype)
-                self.pop[mutant] += 1
+                self.pop[mutant] = self.pop.get(mutant, 0) + 1
+
+    def get_random_haplotype(self):
+        haplotypes, frequencies = zip(*self.pop.items())
+        frequencies = np.array(frequencies) / self.pop_size
+        return np.random.choice(haplotypes, p=frequencies)
+
+    def get_mutant(self, haplotype):
+        site = np.random.randint(0, self.seq_length)
+        new_base = '1' if haplotype[site] == '0' else '0'
+        return haplotype[:site] + new_base + haplotype[site + 1:]
 
     def offspring_step(self, fitness):
-        haplotypes = range(2**self.N)
-        frequencies = self.pop / self.pop_size
+        haplotypes = list(self.pop.keys())
+        frequencies = [self.pop[h] / self.pop_size for h in haplotypes]
         fit_values = [fitness[h] for h in haplotypes]
         weights = np.array(frequencies) * np.array(fit_values)
         weights /= weights.sum()
 
         counts = np.random.multinomial(self.pop_size, weights)
-        self.pop = np.zeros(2**self.N)
+        self.pop.clear()
         for haplotype, count in zip(haplotypes, counts):
             if count > 0:
                 self.pop[haplotype] = count
 
-    def get_random_haplotype(self):
+    @classmethod
+    def getEnv(cls, n_train, n_test):
+        def make_env():
+            return WrightFisherEnv()
+        train_envs = DummyVectorEnv([make_env for _ in range(n_train)])
+        test_envs = DummyVectorEnv([make_env for _ in range(n_test)])
+        return train_envs, test_envs
 
-        haplotypes, frequencies = range(2**self.N), self.pop / self.pop_size
+    def get_fitness(self):
+        frequencies = np.array(list(self.pop.values())) / self.pop_size
+        haplotypes = list(self.pop.keys())
+        state_vector = np.zeros(2**self.seq_length)
+        hap_inds = [int(hap, 2) for hap in haplotypes]
+        for i, hap in enumerate(hap_inds):
+            state_vector[hap] = frequencies[i]
 
-        frequencies = frequencies / np.sum(frequencies)
-
-        return np.random.choice(haplotypes, p=frequencies)
-
-    def get_mutant(self, haplotype):
-        site = np.random.randint(0, self.N)
-        bin_haplo = self.convert_haplotype_to_binary(haplotype)
-        new_base = '1' if bin_haplo[site] == '0' else '0'
-        return int(bin_haplo[:site] + new_base + bin_haplo[site + 1:], 2)
-
-    def convert_haplotype_to_binary(self, haplotype):
-        """
-        Convert a haplotype string to a binary representation.
-        """
-        return bin(haplotype)[2:].zfill(self.N)
+        fitnesses = np.dot(state_vector, self.drug_landscapes[self.current_drug])
+        return np.mean(fitnesses)
 
 
 

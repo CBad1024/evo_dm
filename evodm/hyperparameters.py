@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+
+
 class hyperparameters:
     '''
     class to store the hyperparemeters that control evoDM
@@ -78,5 +81,26 @@ class hyperparameters:
 
         # stats settings -
         self.AGGREGATE_STATS_EVERY = 1  # agg every episode
+
+
+@dataclass(frozen=True)
+class Presets:
+    state_shape : int
+    num_actions : int
+    lr : float
+    epochs : int
+    train_steps_per_epoch : int
+    test_episodes : int
+    batch_size : int
+    buffer_size : int
+
+    @staticmethod
+    def p1() :
+        return Presets(state_shape = 16, num_actions = 15, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=20000)
+
+    @staticmethod
+    def p1_test() :
+        return Presets(state_shape = 16, num_actions = 15, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=20000)
+
 
 

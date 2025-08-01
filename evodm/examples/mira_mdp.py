@@ -1,16 +1,20 @@
-from mdptoolbox.mdp import FiniteHorizon
-import sys
+import builtins
+import datetime as dt
+import logging
 
-from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
-from evodm.evol_game import define_mira_landscapes, evol_env
-from evodm.learner import DrugSelector, hyperparameters, practice, practice_WF
-from evodm.exp import evol_deepmind
 import numpy as np
 import pandas as pd
-import logging
-import datetime as dt
-import builtins
+from matplotlib import pyplot as plt
+from tianshou.data import Batch
+from tianshou.policy import PPOPolicy
+
+from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
+from evodm.evol_game import define_mira_landscapes, evol_env, WrightFisherEnv
+from evodm.exp import evol_deepmind
+from evodm.hyperparameters import Presets
 from evodm.landscapes import Seascape
+from evodm.hyperparameters import hyperparameters
+from evodm.tianshou_learner import load_best_policy, load_random_policy, train_ppo
 
 # Set up logging
 timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -24,11 +28,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # Alias all prints as logger.info for consistency
 def print(*args, **kwargs):
     logger.info(' '.join(str(arg) for arg in args))
 
+
 builtins.print = print
+
+
 def mira_env():
     """Initializes the MDP environment and a simulation environment."""
     drugs = define_mira_landscapes()
@@ -38,20 +46,7 @@ def mira_env():
     # The evol_env is for simulating policies
     env = evol_env(N=4, drugs=drugs, num_drugs=15, normalize_drugs=False,
                    train_input='fitness')
-    # The DrugSelector agent is for the RL algorithm. It requires an hp object.
-    # hp = hyperparameters()
-    # hp.N = 4  # Ensure N is set for hyperparameters
-    # hp.NUM_DRUGS = 15  # Ensure NUM_DRUGS is set for hyperparameters
-    # hp.EPISODES = 500
-    # hp.MIN_REPLAY_MEMORY_SIZE = 2000
-    # hp.MINIBATCH_SIZE = 256
-
-    # print("changed minibatch size: Minibatch = ", hp.MINIBATCH_SIZE)
-    # print("min replay memory size: ", hp.MIN_REPLAY_MEMORY_SIZE)
-    # print("num_episodes: ", hp.EPISODES)
-    # learner_env = DrugSelector(hp=hp, drugs=drugs)
-    # learner_env_naive = DrugSelector(hp=hp, drugs=drugs)
-    return envdp, env #, learner_env, learner_env_naive  # , naive_learner_env # Removed for simplicity, can be added back if needed
+    return envdp, env  #, learner_env, learner_env_naive  # , naive_learner_env # Removed for simplicity, can be added back if needed
 
 
 # generate drug sequences using policies from backwards induction,
@@ -111,7 +106,7 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
     return results_df
 
 
-def main(mdp = False, rl = False, wf_test = False):
+def main(mdp=False, rl=False, wf_test=False, train=False):
     """
     Main function to solve the MIRA MDP and evaluate the policies.
     """
@@ -124,38 +119,7 @@ def main(mdp = False, rl = False, wf_test = False):
     if rl:
         run_rl(env, envdp)
     if wf_test:
-        wf_run()
-
-
-
-    ## Print parameters
-    # print("Batch Size: ", learner_env.hp.MINIBATCH_SIZE)
-
-
-
-    # --- RL Agent Training  ---
-
-
-    # print("\nUsing naive RL agent to solve system...")
-    # rewards_N, agent_N, _, __= practice(learner_env_naive, prev_action=False, standard_practice=True, compute_implied_policy_bool=True, train_freq = 5)
-    # policy_N_one_hot = agent_N.compute_implied_policy(update = True)
-    # policy_N = np.array([np.argmax(a) for a in policy_N_one_hot])
-    # print("policy shape under naive RL: ", policy_N)
-
-
-
-    # print("\nSimulating policy from Non-naive RL...")
-    # RL_NN_results = get_sequences(policy_NN, env, num_episodes = 5, episode_length=envdp.nS, finite_horizon=False)
-    # print("RL NN results:")
-    # print(RL_NN_results.to_string())
-    # print("\nAverage fitness under RL_NN policy:", RL_NN_results['fitness'].mean())
-
-    # print("\nSimulating policy from naive RL...")
-    # RL_N_results = get_sequences(policy_N, env, num_episodes = 5, episode_length=envdp.nS, finite_horizon=False)
-    # print("RL NN results:")
-    # print(RL_N_results.to_string())
-    # print("\nAverage fitness under RL_N policy:", RL_N_results['fitness'].mean())
-
+        run_wrightfischer(train=train)
 
 
 def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
@@ -170,7 +134,7 @@ def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
     Returns:
 
     '''
-    ss = [Seascape(N=4, ls_max=drug, sigma = 0.5) for drug in drugs]
+    ss = [Seascape(N=4, ls_max=drug, sigma=0.5) for drug in drugs]
 
     episode_numbers = []
     states = []
@@ -183,7 +147,6 @@ def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
         action = None
         fitness = 0
         for j in range(episode_length):
-
             action = policy[state]
             fitness = ss[action[0]].ss[action[1]][state]
 
@@ -196,44 +159,90 @@ def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
 
             episode_numbers.append(i)
 
-    results_df = pd.DataFrame({"Episode": episode_numbers,  "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
+    results_df = pd.DataFrame(
+        {"Episode": episode_numbers, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
     return results_df
 
 
+def run_sim_wf(env: WrightFisherEnv, policy: PPOPolicy, drugs, num_episodes=10, episode_length=20):
+    """
+    Simulates the environment for a number of episodes using a given policy.
+
+    Args:
+        env: the evol_env_wf environment
+        policy (np.array): The policy to follow.
+        drugs (list): List of drug landscapes.
+        num_episodes (int): The number of simulation episodes.
+        episode_length (int): The length of each episode.
+
+    Returns:
+        pd.DataFrame: A dataframe containing the simulation history.
+    """
+    states = []
+    actions = []
+    time_steps = []
+    episodes = []
+    fitnesses = []
+
+    for i in range(num_episodes):
+        env.reset()
+        obs = env.get_obs()
+        print(obs)
+
+        for j in range(episode_length):
+            states.append(obs)
+
+            batch = Batch(obs=[obs], info=Batch())
+            action = policy(batch).act[0]
+
+            obs, rew, terminated, truncated, info = env.step(action)
+            actions.append(action)
+            fitnesses.append(env.get_fitness())
+            time_steps.append(j)
+            episodes.append(i)
+
+    results_df = pd.DataFrame(
+        {"Episode": episodes, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
+    return results_df
 
 
+def run_wrightfischer(train : bool):
+    if train:
+        train_ppo(Presets.p1())
+    best_policy = load_best_policy(Presets.p1())
+    results_df = run_sim_wf(env=WrightFisherEnv(), policy=best_policy, drugs=define_mira_landscapes())
+    print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
 
-# def run_sim_wf(env, policy, drugs, num_episodes=10, episode_length=20):
-#     """
-#     Simulates the environment for a number of episodes using a given policy.
-#
-#     Args:
-#         env: the evol_env_wf environment
-#         policy (np.array): The policy to follow.
-#         drugs (list): List of drug landscapes.
-#         num_episodes (int): The number of simulation episodes.
-#         episode_length (int): The length of each episode.
-#
-#     Returns:
-#         pd.DataFrame: A dataframe containing the simulation history.
-#     """
-#
-#     for i in range(num_episodes):
-#         env.reset()
-#         for j in range(episode_length):
-#             current_state_index = np.argmax(env.state_vector)
-#             action_opt = policy[current_state_index]
-#
-#             # evol_env now expects 0-indexed actions
-#             env.action = int(action_opt) if not env.SEASCAPES else action_opt
-#             env.step()
-#
-#
-#     return results_df
+    print("\nAverage WF fitness: ", np.mean(results_df["Fitness"]))
 
-def wf_run():
-    practice_WF(hyperparameters())
+    random_policy = load_random_policy(Presets.p1())
+    random_results_df = run_sim_wf(env=WrightFisherEnv(), policy=random_policy, drugs=define_mira_landscapes())
+    print("\nAverage Random WF fitness: ", np.mean(random_results_df["Fitness"]))
 
+    #TODO compare to random policy
+    states_unflattened = np.array(results_df.loc[:, "State"].values)
+
+    states_flat = []
+    for i in range(len(states_unflattened)):
+        for e in states_unflattened[i]:
+            states_flat.append(e)
+
+    states = np.array(states_flat)
+
+    states = np.reshape(states, (10, 20, 16))
+    print(states.shape)
+
+    for episode in states:
+        fig, ax = plt.subplots()
+        for i in range(16):
+            gen = bin(i)[2:].zfill(4)
+            ax.plot(episode[:, i], label=f'Genotype: {gen}')
+
+        ax.set_xlabel('Time Step')
+        ax.set_ylabel('Proportion')
+        ax.set_title('Genotype WF Proportions over time')
+        ax.legend()
+        plt.show()
 
 
 def run_mdp(envdp, env):
@@ -269,6 +278,7 @@ def run_mdp(envdp, env):
     print(pi_results.to_string())
     print("\nAverage fitness under PI policy:", pi_results['fitness'].mean())
 
+
 def run_rl(env, envdp):
     v_N = 4
     v_mira = True
@@ -276,36 +286,35 @@ def run_rl(env, envdp):
     num_episodes = 350
     batch_size = 256
 
-
-
     hp = hyperparameters()
     hp.SEASCAPES = False
     hp.N = v_N
     hp.mira = v_mira
     hp.num_episodes = num_episodes
     hp.batch_size = batch_size
-    rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards, dp_policy, naive_policy, policy, dp_V, rewards_ss, agent_ss, dosage_policy_raw, V_ss = evol_deepmind(savepath = None, num_evols = 1, N = v_N, episodes = num_episodes,
-                  reset_every = 20, min_epsilon = 0.005,
-                  train_input = "state_vector",  random_start = False,
-                  noise = False, noise_modifier = 1, num_drugs = v_drugs,
-                  sigma = 0.5, normalize_drugs = True,
-                  player_wcutoff = -1, pop_wcutoff = 2, win_threshold = 200,
-                  win_reward = 1, standard_practice = False, drugs = None,
-                  average_outcomes = False, mira = v_mira, gamma = 0.99,
-                  learning_rate = 0.0001, minibatch_size = batch_size,
-                  pre_trained = False, wf = False,
-                  mutation_rate = 1e-5,
-                  gen_per_step = 500,
-                  pop_size = 10000,
-                  agent = "none",
-                  update_target_every = 310, total_resistance = False,
-                  starting_genotype = 0, train_freq = 1,
-                  compute_implied_policy_bool = True,
-                  dense = False, master_memory = True,
-                  delay = 0, phenom = 1, min_replay_memory_size = 1000, seascapes = True)
+    rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards, dp_policy, naive_policy, policy, dp_V, rewards_ss, agent_ss, dosage_policy_raw, V_ss = evol_deepmind(
+        savepath=None, num_evols=1, N=v_N, episodes=num_episodes,
+        reset_every=20, min_epsilon=0.005,
+        train_input="state_vector", random_start=False,
+        noise=False, noise_modifier=1, num_drugs=v_drugs,
+        sigma=0.5, normalize_drugs=True,
+        player_wcutoff=-1, pop_wcutoff=2, win_threshold=200,
+        win_reward=1, standard_practice=False, drugs=None,
+        average_outcomes=False, mira=v_mira, gamma=0.99,
+        learning_rate=0.0001, minibatch_size=batch_size,
+        pre_trained=False, wf=False,
+        mutation_rate=1e-5,
+        gen_per_step=500,
+        pop_size=10000,
+        agent="none",
+        update_target_every=310, total_resistance=False,
+        starting_genotype=0, train_freq=1,
+        compute_implied_policy_bool=True,
+        dense=False, master_memory=True,
+        delay=0, phenom=1, min_replay_memory_size=1000, seascapes=True)
 
     print(":: RETURNED POLICY ", np.array(policy))
-    drug_policy=policy
+    drug_policy = policy
     print("policy shape under non-naive RL: ", np.array(policy).shape)
     dosage_policy = np.array([np.argmax(s) for s in dosage_policy_raw])
     final_policy = [(int(drug_policy[i]), int(dosage_policy[i])) for i in range(len(drug_policy))]
@@ -321,4 +330,4 @@ def run_rl(env, envdp):
 
 
 if __name__ == "__main__":
-    main(mdp = False, rl = False, wf_test = True)
+    main(mdp=False, rl=False, wf_test=True)
