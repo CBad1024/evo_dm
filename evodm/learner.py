@@ -12,12 +12,12 @@ from keras.models import Sequential, Model
 from keras.optimizers import Adam
 from keras.regularizers import L2
 from keras.utils import to_categorical
-from torch.optim import Adam
 from tqdm import tqdm
 
 from evodm.dpsolve import backwards_induction, dp_env
-from evodm.evol_game import evol_env, evol_env_wf
+from evodm.evol_game import evol_env, evol_env_wf, define_mira_landscapes
 from evodm.landscapes import Seascape
+import pandas as pd
 
 
 def unpack(model_config, weights, compile_config=None):
@@ -607,8 +607,9 @@ def practice(agent, naive=False, standard_practice=False,
             # TODO Change to initially training on which drug to use, then to training on dose
             # Calculated policy holds for even when the action is dose and not drug
             calculated_policy = np.array([np.argmax(s) for s in policy])
+            fitness = calculate_simulated_fitness(agent.env.SEASCAPES, calculated_policy, agent.env)
             print("Episode ", episode, "| calculated policy: ", calculated_policy, " | epsilon: ", agent.hp.epsilon,
-                  " | fitness: ", np.mean(agent.env.fitness), " | loss: ", losses_list[-1])
+                  " | fitness: ", fitness, " | loss: ", losses_list[-1])
 
         # reset environment for next iteration
         agent.env.reset()
@@ -629,3 +630,59 @@ def practice(agent, naive=False, standard_practice=False,
         policy = []
         V = []
     return reward_list, agent, policy, V
+
+
+def run_sim_seascape(policy, drugs, num_episodes=20, episode_length=20):
+    '''
+    Currently only works for a SSWM problem
+    Args:
+        policy:
+        drugs:
+        num_episodes:
+        episode_length:
+
+    Returns:
+
+    '''
+    ss = [Seascape(N=4, ls_max=drug, sigma=0.5) for drug in drugs]
+
+    episode_numbers = []
+    states = []
+    actions = []
+    fitnesses = []
+    time_steps = []
+
+    for i in range(num_episodes):
+
+        state = 0  # Initial state vector
+        action = None
+        fitness = 0
+        for j in range(episode_length):
+            if policy is not None:
+                action = policy[state]
+            else:
+                action = (np.random.randint(15), np.random.randint(8)) #FIXME make this dynamic
+            fitness = ss[action[0]].ss[action[1]][state]
+
+            states.append(state)
+            actions.append(action)
+            fitnesses.append(fitness)
+
+            state = np.argmax(ss[action[0]].get_TM(action[1])[state])
+            time_steps.append(j)
+
+            episode_numbers.append(i)
+
+    results_df = pd.DataFrame(
+        {"Episode": episode_numbers, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
+    return results_df
+
+
+def calculate_simulated_fitness(seascapes, policy, env):
+    if seascapes:
+        policy_new = [(env.drug_policy[i], policy[i]) for i in range(len(policy))]
+    else:
+        policy_new = [(policy[i], 0) for i in range(len(policy))]
+
+    results = run_sim_seascape(policy_new, define_mira_landscapes())
+    return results["Fitness"].mean()

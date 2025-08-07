@@ -366,9 +366,9 @@ class evol_env:
                 #np.exp(1 - fit) - 1
                 diversity_bonus = self.compute_diversity_bonus(self.action_history)
 
-                reward = 2*(np.exp(1 - fitness) - 0.5) - diversity_bonus
+                reward = -fitness - diversity_bonus
                 if seascapes:
-                    reward -= np.log10(self.action)/6 #penalize for high concentrations
+                    reward += - 0.05 *np.log10(self.concentrations[self.action]) #penalize for high concentrations
         else:
             if self.pop_wcount >= self.WIN_THRESHOLD:
                 reward = -self.WIN_REWARD
@@ -378,7 +378,9 @@ class evol_env:
                 self.DONE = True
             else:
                 diversity_bonus = self.compute_diversity_bonus(self.action_history)
-                reward = -1 if np.mean(fitness) > 0.8 else (np.exp(1 - fitness) - 0.5) - diversity_bonus
+                reward = -1 if np.mean(fitness) > 0.8 else -fitness - diversity_bonus
+                if seascapes:
+                    reward += -0.05*np.log10(self.concentrations[self.action]) #penalize for high concentrations
 
         return reward
 

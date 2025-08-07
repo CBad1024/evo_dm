@@ -1,5 +1,7 @@
 from evodm.learner import *
 from evodm.evol_game import define_mira_landscapes
+from evodm.hyperparameters import hyperparameters
+
 from evodm.landscapes import Landscape
 import pandas as pd
 import numpy as np
@@ -25,7 +27,7 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
                   starting_genotype = 0, train_freq = 100, 
                   compute_implied_policy_bool = False,
                   dense = False, master_memory = True,
-                  delay = 0, phenom = 0, min_replay_memory_size = 1000, seascapes = False):
+                  delay = 0, phenom = 0, min_replay_memory_size = 1000, seascapes = False, cycling_policy = None, skip_to_seascape_training = False):
     """
     evol_deepmind is the main function that initializes and trains a learner to switch between n drugs
     to try and minimize the fitness of a population evolving on a landscape.
@@ -137,15 +139,23 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     agent = DrugSelector(hp = hp, drugs = drugs)
     naive_agent = DrugSelector(hp=hp, drugs = drugs) #otherwise it all gets overwritten by the actual agent (changed from deepcopy(agent)
 
-    rewards, agent, drug_policy_raw, V = practice(agent, naive=False, wf=wf,
-                                         train_freq=train_freq,
-                                         compute_implied_policy_bool=compute_implied_policy_bool)  # added arg for train frequency
+    if not skip_to_seascape_training:
+        rewards, agent, drug_policy_raw, V = practice(agent, naive=False, wf=wf,
+                                             train_freq=train_freq,
+                                             compute_implied_policy_bool=compute_implied_policy_bool)  # added arg for train frequency
 
-    drug_policy = np.array([np.argmax(s) for s in drug_policy_raw]) #converts from one-hot encoding to drug ids
+        drug_policy = np.array([np.argmax(s) for s in drug_policy_raw]) #converts from one-hot encoding to drug ids
+    else:
+        drug_policy = cycling_policy
+        rewards = None
+        agent = None
+        drug_policy_raw = None
+        V = None
     if seascapes:
         #Train new agent with seascapes
         hp.SEASCAPES = True
         hp.drug_policy = drug_policy
+        hp.EPISODES = 120
         agent_ss = DrugSelector(hp=hp, drugs=define_mira_landscapes())
         rewards_ss, agent_ss, dosage_policy, V_ss = practice(agent_ss, naive=False, wf=False, train_freq=1,
                                                                  compute_implied_policy_bool=True)

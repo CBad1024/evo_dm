@@ -119,10 +119,10 @@ def main(mdp=False, rl=False, wf_test=False, train=False):
     if rl:
         run_rl(env, envdp)
     if wf_test:
-        run_wrightfischer(train=train)
+        run_wright_fisher(train=train)
 
 
-def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
+def run_sim_seascape(policy, drugs, num_episodes=50, episode_length=20):
     '''
     Currently only works for a SSWM problem
     Args:
@@ -141,13 +141,18 @@ def run_sim_seascape(policy, drugs, num_episodes=10, episode_length=20):
     actions = []
     fitnesses = []
     time_steps = []
+
+
     for i in range(num_episodes):
 
         state = 0  # Initial state vector
         action = None
         fitness = 0
         for j in range(episode_length):
-            action = policy[state]
+            if policy is not None:
+                action = policy[state]
+            else:
+                action = (np.random.randint(15), np.random.randint(8)) #FIXME make this dynamic
             fitness = ss[action[0]].ss[action[1]][state]
 
             states.append(state)
@@ -206,10 +211,10 @@ def run_sim_wf(env: WrightFisherEnv, policy: PPOPolicy, drugs, num_episodes=10, 
     return results_df
 
 
-def run_wrightfischer(train : bool):
+def run_wright_fisher(train : bool):
     if train:
         train_ppo(Presets.p1())
-    best_policy = load_best_policy(Presets.p1())
+    best_policy = load_best_policy(Presets.p1(), filename="best_policy_.pth")
     results_df = run_sim_wf(env=WrightFisherEnv(), policy=best_policy, drugs=define_mira_landscapes())
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
 
@@ -287,7 +292,7 @@ def run_rl(env, envdp):
     batch_size = 256
 
     hp = hyperparameters()
-    hp.SEASCAPES = False
+
     hp.N = v_N
     hp.mira = v_mira
     hp.num_episodes = num_episodes
@@ -311,7 +316,7 @@ def run_rl(env, envdp):
         starting_genotype=0, train_freq=1,
         compute_implied_policy_bool=True,
         dense=False, master_memory=True,
-        delay=0, phenom=1, min_replay_memory_size=1000, seascapes=True)
+        delay=0, phenom=1, min_replay_memory_size=1000, seascapes=True, skip_to_seascape_training=True, cycling_policy=[10, 10, 10, 10,  4,  4, 10, 10,  4,  4, 13, 13,  4,  4, 13, 13])
 
     print(":: RETURNED POLICY ", np.array(policy))
     drug_policy = policy
@@ -330,4 +335,15 @@ def run_rl(env, envdp):
 
 
 if __name__ == "__main__":
-    main(mdp=False, rl=False, wf_test=True)
+    # main(mdp=False, rl=True, wf_test=False)
+    trained_policy = [(4, 4), (4, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (3, 4), (13, 4), (13, 4), (3, 4), (3, 4), (13, 4), (13, 4)]
+    seascape_results = run_sim_seascape(trained_policy, np.array(define_mira_landscapes()))
+    print(seascape_results)
+    print("Final drug policy: ", trained_policy)
+    print("Average fitness under trained seascapes: ", seascape_results["Fitness"].mean())
+    plt.plot(seascape_results["Fitness"][:20], "bo-")
+    plt.xlabel("Time step")
+    plt.ylabel("Fitness")
+    plt.title("Fitness over time")
+    plt.legend()
+    plt.show()

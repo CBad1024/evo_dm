@@ -22,10 +22,10 @@ writer = SummaryWriter(log_path)
 logger = TensorboardLogger(writer)
 
 
-def load_best_policy(p: P):
+def load_best_policy(p: P, filename : str = "best_policy.pth"):
     train_envs, test_envs = WrightFisherEnv.getEnv(4, 2)
     policy = get_ppo_policy(p, train_envs)
-    best_policy: PPOPolicy = load_best_fn(policy)
+    best_policy = load_best_fn(policy=policy, filename=filename)
 
     # // remove later
     import json
@@ -159,6 +159,6 @@ def save_best_fn(policy: BasePolicy):
     torch.save(policy, os.path.join(log_path, 'best_complete_policy.pth'))
 
 
-def load_best_fn(policy: BasePolicy):
-    policy.load_state_dict(torch.load(os.path.join(log_path, 'best_policy.pth')))
+def load_best_fn(policy: BasePolicy, filename : str = "best_policy.pth"):
+    policy.load_state_dict(torch.load(os.path.join(log_path, filename)))
     return policy
