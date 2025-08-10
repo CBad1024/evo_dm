@@ -14,7 +14,7 @@ from evodm.exp import evol_deepmind
 from evodm.hyperparameters import Presets
 from evodm.landscapes import Seascape
 from evodm.hyperparameters import hyperparameters
-from evodm.tianshou_learner import load_best_policy, load_random_policy, train_ppo
+from evodm.tianshou_learner import load_best_policy, load_random_policy, train_wf_landscapes
 
 # Set up logging
 timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -106,7 +106,7 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
     return results_df
 
 
-def main(mdp=False, rl=False, wf_test=False, train=False):
+def main(mdp=False, rl=False, wf_test=False, wf_train=False, wf_seascapes = False):
     """
     Main function to solve the MIRA MDP and evaluate the policies.
     """
@@ -119,7 +119,7 @@ def main(mdp=False, rl=False, wf_test=False, train=False):
     if rl:
         run_rl(env, envdp)
     if wf_test:
-        run_wright_fisher(train=train)
+        run_wright_fisher(train=wf_train, seascapes=wf_seascapes)
 
 
 def run_sim_seascape(policy, drugs, num_episodes=50, episode_length=20):
@@ -183,6 +183,7 @@ def run_sim_wf(env: WrightFisherEnv, policy: PPOPolicy, drugs, num_episodes=10, 
     Returns:
         pd.DataFrame: A dataframe containing the simulation history.
     """
+    print("Running simulation ...")
     states = []
     actions = []
     time_steps = []
@@ -201,7 +202,7 @@ def run_sim_wf(env: WrightFisherEnv, policy: PPOPolicy, drugs, num_episodes=10, 
             action = policy(batch).act[0]
 
             obs, rew, terminated, truncated, info = env.step(action)
-            actions.append(action)
+            actions.append(int(action))
             fitnesses.append(env.get_fitness())
             time_steps.append(j)
             episodes.append(i)
@@ -211,17 +212,60 @@ def run_sim_wf(env: WrightFisherEnv, policy: PPOPolicy, drugs, num_episodes=10, 
     return results_df
 
 
-def run_wright_fisher(train : bool):
+def run_wright_fisher(train : bool, seascapes : bool = False):
+    if seascapes:
+        p = Presets.p1_ss()
+    else:
+        p = Presets.p1_ls()
+
     if train:
-        train_ppo(Presets.p1())
-    best_policy = load_best_policy(Presets.p1(), filename="best_policy_.pth")
-    results_df = run_sim_wf(env=WrightFisherEnv(), policy=best_policy, drugs=define_mira_landscapes())
+        if seascapes:
+            print("Seascapes enabled")
+
+        print("Training Wright Fisher...")
+        train_wf_landscapes(p = p, seascapes=seascapes)
+
+
+    filename = "best_policy_ss.pth" if seascapes else "best_policy.pth"
+
+
+    best_policy = load_best_policy(p, filename=filename)
+    env = WrightFisherEnv(seascapes=seascapes)
+    if not seascapes:
+        results_df = run_sim_wf(env= env, policy=best_policy, drugs=define_mira_landscapes())
+    else:
+
+        results_df = run_sim_wf(env = env, policy=best_policy, drugs=env.drug_seascapes)
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
 
     print("\nAverage WF fitness: ", np.mean(results_df["Fitness"]))
 
-    random_policy = load_random_policy(Presets.p1())
-    random_results_df = run_sim_wf(env=WrightFisherEnv(), policy=random_policy, drugs=define_mira_landscapes())
+    actions = results_df["Action"]
+
+    action_freq = {i : 0 for i in range(env.num_drugs*env.num_concs)}
+    print(action_freq.keys())
+
+    for action in actions:
+        action_freq[action] += 1
+
+    # Get action frequencies sorted
+    sorted_actions = np.array(list(action_freq.keys()))[np.argsort(np.array(list(action_freq.values())))][::-1]
+    reformatted_actions = [f"{(action % 10, int(action/10))}: {action_freq[action]}" for action in sorted_actions]
+    print("Top actions: \n\n", reformatted_actions)
+
+    #Print out the seascapes of the testing environment
+
+    for ss in env.seascape_list:
+        ss.visualize_concentration_effects()
+
+
+
+    random_policy = load_random_policy(p)
+    if not seascapes:
+        random_results_df = run_sim_wf(env=WrightFisherEnv(), policy=random_policy, drugs=define_mira_landscapes())
+    else:
+        env.reset()
+        random_results_df = run_sim_wf(env = env, policy=random_policy, drugs=define_mira_landscapes())
     print("\nAverage Random WF fitness: ", np.mean(random_results_df["Fitness"]))
 
     #TODO compare to random policy
@@ -241,12 +285,13 @@ def run_wright_fisher(train : bool):
         fig, ax = plt.subplots()
         for i in range(16):
             gen = bin(i)[2:].zfill(4)
-            ax.plot(episode[:, i], label=f'Genotype: {gen}')
+            ax.plot(episode[:, i], label=f'{gen}')
 
         ax.set_xlabel('Time Step')
         ax.set_ylabel('Proportion')
         ax.set_title('Genotype WF Proportions over time')
-        ax.legend()
+        ax.legend(loc = "upper left", bbox_to_anchor = (1,1), title = "Genotype")
+        plt.tight_layout()
         plt.show()
 
 
@@ -335,15 +380,15 @@ def run_rl(env, envdp):
 
 
 if __name__ == "__main__":
-    # main(mdp=False, rl=True, wf_test=False)
-    trained_policy = [(4, 4), (4, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (3, 4), (13, 4), (13, 4), (3, 4), (3, 4), (13, 4), (13, 4)]
-    seascape_results = run_sim_seascape(trained_policy, np.array(define_mira_landscapes()))
-    print(seascape_results)
-    print("Final drug policy: ", trained_policy)
-    print("Average fitness under trained seascapes: ", seascape_results["Fitness"].mean())
-    plt.plot(seascape_results["Fitness"][:20], "bo-")
-    plt.xlabel("Time step")
-    plt.ylabel("Fitness")
-    plt.title("Fitness over time")
-    plt.legend()
-    plt.show()
+    main(mdp=False, rl=False, wf_test=True, wf_train=True, wf_seascapes=True)
+    # trained_policy = [(4, 4), (4, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (10, 4), (3, 4), (13, 4), (13, 4), (3, 4), (3, 4), (13, 4), (13, 4)]
+    # seascape_results = run_sim_seascape(trained_policy, np.array(define_mira_landscapes()))
+    # print(seascape_results)
+    # print("Final drug policy: ", trained_policy)
+    # print("Average fitness under trained seascapes: ", seascape_results["Fitness"].mean())
+    # plt.plot(seascape_results["Fitness"][:20], "bo-")
+    # plt.xlabel("Time step")
+    # plt.ylabel("Fitness")
+    # plt.title("Fitness over time")
+    # plt.legend()
+    # plt.show()

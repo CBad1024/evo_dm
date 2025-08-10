@@ -727,7 +727,7 @@ def define_mira_landscapes(as_dict=False):
 #FIXME change evol_env_wf to inherit from gym.env and then make compatible with tianshou
 
 class WrightFisherEnv(gym.Env):
-    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, switch_interval=25, total_generations=1000):
+    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, switch_interval=25, total_generations=1000, seascapes = False, num_drugs = 10):
         super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size
         self.seq_length = seq_length
@@ -735,13 +735,29 @@ class WrightFisherEnv(gym.Env):
         self.switch_interval = switch_interval
         self.total_generations = total_generations
         self.genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.seq_length)]
+        self.seascapes = seascapes
 
         # Drug data
-        self.drug_landscapes = define_mira_landscapes()
-        self.num_drugs = len(self.drug_landscapes)
 
-        # Action space: choosing one of the drugs
-        self.action_space = spaces.Discrete(self.num_drugs)
+        self.seascape_list = [Seascape(self.seq_length, sigma=0.5, selectivity=0.01, drug_label = i) for i in range(num_drugs)]
+        self.drug_seascapes = np.array([seas.ss for seas in self.seascape_list])  # (drug, conc, genotype)
+
+        #TODO Write this data to separate file and then reuse for testing
+
+        self.concentrations = [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005]
+
+        self.num_drugs = num_drugs
+        if seascapes:
+            self.num_concs = len(self.seascape_list[0].concentrations)
+        else:
+            self.num_concs = 1
+
+        # Action space: choosing one of the drugs (and one of the doses if seascapes)
+
+
+
+        self.action_space = spaces.Discrete(self.num_drugs*self.num_concs)
+
 
         # Observation space: genotype frequencies
         self.observation_space = spaces.Box(low=0, high=1, shape=(len(self.genotypes),), dtype=np.float32)
@@ -749,6 +765,7 @@ class WrightFisherEnv(gym.Env):
         # State initialization
         self.pop = {}
         self.current_drug = 0
+        self.current_conc = 0
         self.generation = 0
         self.reset()
 
@@ -757,13 +774,23 @@ class WrightFisherEnv(gym.Env):
         self.pop = {'0' * self.seq_length: self.pop_size}
         self.generation = 0
         self.current_drug = 0
+        self.current_conc = 2 #we always rest the concentration to a medium value
         obs = self._get_obs()
         return obs, {}
 
 
     def step(self, action):
-        self.current_drug = action
-        fitness = {geno: self.drug_landscapes[action][i] for i, geno in enumerate(self.genotypes)}
+        if not self.seascapes:
+            self.current_drug = action
+            self.current_conc = 2
+        else:
+            self.current_drug = action % 10 #ones digit
+            self.current_conc = int(action/10) #tens digit
+
+        if self.current_drug >= 10 or self.current_conc >= 8:
+           raise ValueError("Current Drug: ", self.current_drug, "\nCurrent Conc: ", self.current_conc)
+
+        fitness = {geno: self.drug_seascapes[self.current_drug, self.current_conc, i] for i, geno in enumerate(self.genotypes)}
 
         for _ in range(self.switch_interval):
             self.time_step(fitness)
@@ -773,7 +800,14 @@ class WrightFisherEnv(gym.Env):
 
         obs = self._get_obs()
         avg_fit = sum((self.pop.get(g, 0) / self.pop_size) * fitness[g] for g in self.genotypes)
+
         reward = 1-avg_fit
+
+        if self.seascapes:
+            a = self.concentrations[self.current_conc]
+            if a <= 0:
+                print(a)
+            reward -= 0.06*np.log10(self.concentrations[self.current_conc])
 
         terminated = self.generation >= self.total_generations
         truncated = False  # Gymnasium requires this explicitly
@@ -826,9 +860,9 @@ class WrightFisherEnv(gym.Env):
                 self.pop[haplotype] = count
 
     @classmethod
-    def getEnv(cls, n_train, n_test):
+    def getEnv(cls, n_train, n_test, seascapes = False):
         def make_env():
-            return WrightFisherEnv()
+            return WrightFisherEnv(seascapes=seascapes)
         train_envs = DummyVectorEnv([make_env for _ in range(n_train)])
         test_envs = DummyVectorEnv([make_env for _ in range(n_test)])
         return train_envs, test_envs
@@ -841,8 +875,11 @@ class WrightFisherEnv(gym.Env):
         for i, hap in enumerate(hap_inds):
             state_vector[hap] = frequencies[i]
 
-        fitnesses = np.dot(state_vector, self.drug_landscapes[self.current_drug])
+        fitnesses = np.dot(state_vector, self.drug_seascapes[self.current_drug, self.current_conc])
         return np.mean(fitnesses)
+
+
+
 
 
 

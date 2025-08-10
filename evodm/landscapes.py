@@ -1,9 +1,7 @@
-from tabnanny import format_witnesses
-
 import numpy as np
 import scipy.linalg as la
 import scipy.optimize as op
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, truncnorm
 import scipy.sparse as sparse
 import copy
 import math
@@ -779,97 +777,6 @@ class Landscape:
         ax = plt.gca()
         ax.collections[0].set_edgecolor("#000000")
 
-    
-    # def graphTraj(self, TM, N, p=None, verbose=False):
-    #     """
-        # Modified version of graph(). Deprecated.
-        # """
-        # #TM = self.get_TM()
-        # # Transpose TM because draw functions uses transposed version.
-        # TM = list(map(list, zip(*TM)))
-        #
-        # # Figure out the length of the bit sequences we're working with
-        # N = N
-        #
-        # # Generate all possible N-bit sequences
-        # genotypes = ["".join(seq) for seq in itertools.product("01", repeat=N)]
-        #
-        # # Turn the unique bit sequences array into a list of tuples with the bit sequence and its corresponding fitness
-        # # The tuples can still be used as nodes because they are hashable objects
-        # genotypes = [(genotypes[i], self.ls[i]) for i in range(len(genotypes))]
-        #
-        # # Build hierarchical structure for N-bit sequences that differ by 1 bit at each level
-        # hierarchy = [[] for i in range(N+1)]
-        # for g in genotypes: hierarchy[g[0].count("1")].append(g)
-        #
-        # # Add all unique bit sequences as nodes to the graph
-        # G = nx.DiGraph()
-        # G.add_nodes_from(genotypes)
-        #
-        # # Add edges with appropriate weights depending on the TM
-        # sf = 5 # edge thickness scale factor
-        # for i in range(len(TM)):
-        #     for j in range(len(TM[i])):
-        #         if TM[i][j] != 0 and i != j:
-        #             G.add_edge(genotypes[i], genotypes[j], weight=sf*TM[i][j])
-        #
-        # # Find the local & global min/max
-        # maxes = []
-        # mins = []
-        # for node in G:
-        #     if len(G[node]) == 0:
-        #         maxes.append(node)
-        #     elif len(G[node]) == N:
-        #         mins.append(node)
-        #
-        # # Create label dict for max/min nodes
-        # labels = {}
-        # for n in maxes:
-        #     labels[n] = " "
-        # for n in mins:
-        #     labels[n] = " "
-        #
-        # # Store all the edge weights in a list so they can be used to control the edge widths when drawn
-        # edges = G.edges()
-        # weights = [G[u][v]['weight'] for u,v in edges]
-        #
-        # # just using spring layout to generate an initial dummy pos dict
-        # pos = nx.spring_layout(G)
-        #
-        # # calculate how many entires in the longest row, it will be N choose N/2
-        # # because the longest row will have every possible way of putting N/2 1s (or 0s) into N bits
-        # maxLen = math.factorial(N) / math.factorial(N//2)**2
-        #
-        # # Position the nodes in a layered hierarchical structure by modifying pos dict
-        # y = 1
-        # for row in hierarchy:
-        #     if len(row) > maxLen: maxLen = len(row)
-        # for i in range(len(hierarchy)):
-        #     levelLen = len(hierarchy[i])
-        #     # algorithm for horizontal spacing.. may not be 100% correct?
-        #     offset = (maxLen - levelLen + 1) / maxLen
-        #     xs = np.linspace(0 + offset / 2, 1 - offset / 2, levelLen)
-        #     for j in range(len(hierarchy[i])):
-        #         pos[hierarchy[i][j]] = (xs[j], y)
-        #     y -= 1 / N
-        #
-        # # Print node structure to console
-        # if verbose:
-        #     for i in range(len(hierarchy)):
-        #         print(("Row {}: " + str([h[0] for h in hierarchy[i]]).strip('[]')).format(i+1))
-        #     print()
-        #
-        # node_size = 500
-        # if p is not None:
-        #     node_size = [10 + 1000*val for val in p]
-        #
-        # # Draw the graph
-        # plt.axis('off')
-        # node_vals = [g[1] for g in G.nodes()]
-        # nx.draw(G, pos, with_labels=False, width=weights, linewidths=1, cmap=plt.get_cmap('Greys'), node_color=node_vals,node_size=node_size)
-        # nx.draw_networkx_labels(G,pos,labels,font_size=16,font_color='red') # labels for min/max nodes
-        # ax = plt.gca()
-        # ax.collections[0].set_edgecolor("#000000")
 
 
 
@@ -879,11 +786,20 @@ class Seascape(Landscape):
     This class represents seascapes, which are landscapes that account for drug concentrations. It is required to give concentration of 0 as last concentration value.
     """
 
+    params_set = False
+    fitnesses = None
+    resistances = None
+    selection_dist = None
+
     def __init__(self, N, sigma, ss=None, ls_max = None, parent=None, num_jumps=1, dense=False,
-                 compute_tm=False, concentrations=[0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.0], hill_coeff=1, ic50s = None):
+                 compute_tm=False, concentrations=[0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005], hill_coeff=1, ic50s = None, selectivity = None, drug_label = None):
         """
         Initializes seascape objects with given N and sigma to simulate epistasis (zero sigma produces an additive landscape with exactly one global maximum).
         """
+
+        ### NOTE: ALL SEASCAPES GENERATED WILL HAVE SAME SET OF NULL FITNESSES, RESISTANCES, AND SELECTION DISTRIBUTION
+        cls = Seascape
+
         self.dense = dense
         self.N = N
         self.sigma = sigma
@@ -896,9 +812,18 @@ class Seascape(Landscape):
         if ic50s is None:
             self.ic50s = np.zeros(2**N)
             for i in range(2**N):
-                self.ic50s[i] = np.random.uniform(self.concentrations[-1], self.concentrations[0]) # Generates a random IC50 for each genotype between the lowest and highest concentrations.
+                self.ic50s[i] = np.random.uniform(0.01, 0.0001) # Generates a random IC50 for each genotype between the lowest and highest concentrations.
         else:
             self.ic50s = ic50s
+
+
+        self.selectivity = selectivity
+
+        #Get drug label (if given, otherwise none)
+        if drug_label is not None:
+            self.drug_label = str(drug_label)
+        else:
+            self.drug_label = ""
 
 
 
@@ -906,23 +831,46 @@ class Seascape(Landscape):
         ## then plug in concentrations to get fitnesses
         ## finally use the fitnesses to additively generate the seascape and then add noise on top of everything.
         if ss is None and ls_max is None:
-            self.ss = np.zeros((len(self.concentrations),)) # Initializes seascape with zeros for each concentration and each genotype.
-            self.ss[-1, 0] = 0 # 0 drug concentration initially set to 0 fitness for the wild type (set to 1 later).
-            fitnesses = np.random.uniform(-1, 1, N) # each mutation gets a random fitness that will be used to additively generate the seascape.
-            for mut in range(N):
-                np.append(self.ss[-1], self.ss[-1] + fitnesses[mut]) # Adds the fitness of each mutation to the seascape at 0 concentration.
+            if selectivity is None:
+                self.ss = np.zeros((len(self.concentrations),)) # Initializes seascape with zeros for each concentration and each genotype.
+                self.ss[-1, 0] = 0 # 0 drug concentration initially set to 0 fitness for the wild type (set to 1 later).
+                fitnesses = np.random.uniform(-1, 1, N) # each mutation gets a random fitness that will be used to additively generate the seascape.
+                for mut in range(N):
+                    np.append(self.ss[-1], self.ss[-1] + fitnesses[mut]) # Adds the fitness of each mutation to the seascape at 0 concentration.
 
-            self.ss[-1, 0] = 1 # Sets the wild type fitness at 0 concentration to 1.
-            # now we can generate hill equations for each genotype
-            for i in range(len(concentrations)):
-                for j in range(2**N):
-                    #using seascapes as defined by Eshan King's paper
-                    self.ss[i, j] = self.ss[-1, j]/ (1 + np.exp((self.ic50s[j] - np.log10(i))/hill_coeff))
+                self.ss[-1, 0] = 1 # Sets the wild type fitness at 0 concentration to 1.
+                # now we can generate hill equations for each genotype
+                for i in range(len(concentrations)):
+                    for j in range(2**N):
+                        #using seascapes as defined by Eshan King's paper
+                        self.ss[i, j] = self.ss[-1, j]/ (1 + np.exp((self.ic50s[j] - np.log10(i))/hill_coeff))
 
-            # Add noise to the seascape
-            if self.sigma != 0:
-                noise = np.random.normal(0, self.sigma, (len(self.concentrations), 2**N))
-                self.ss += noise
+                # Add noise to the seascape
+                if self.sigma != 0:
+                    noise = np.random.normal(0, self.sigma, (len(self.concentrations), 2**N))
+                    self.ss += noise
+
+            elif selectivity is not None:
+                self.ss = np.zeros((len(self.concentrations), 2**self.N))
+
+                if not cls.params_set:
+                    epg = EvoParamGenerator(N, selectivity)
+                    cls.selection_dist = epg.selection_dist
+                    cls.fitnesses = epg.fitnesses
+                    cls.resistances = epg.resistances
+                    cls.params_set = True
+
+
+                fitnesses = cls.fitnesses
+                resistances = cls.resistances
+
+
+                for i in range(len(concentrations)):
+                    for j in range(2**N):
+                        #using seascapes as defined by Eshan King's paper
+
+                        self.ss[i, j] = fitnesses[j] / (1 + np.exp(-(np.log10(self.ic50s[j]) - resistances[j] * np.log10(self.concentrations[i])) / hill_coeff))
+
 
 
         elif ls_max is not None:
@@ -1108,8 +1056,8 @@ class Seascape(Landscape):
             ax.plot(self.ss[i], label=f'Concentration: {conc}')
         ax.set_xlabel('Genotype Index')
         ax.set_ylabel('Fitness')
-        ax.set_title('Fitness Seascape')
-        ax.legend()
+        ax.set_title(f'Drug {self.drug_label} Landscapes, Varying Concentration')
+        ax.legend(loc = "upper left", bbox_to_anchor = (1,1))
         plt.show()
 
     def visualize_concentration_effects(self):
@@ -1119,23 +1067,78 @@ class Seascape(Landscape):
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
 
+
         ax.set_xscale("log")
         for i in range(2**self.N):
             gen = bin(i)[2:].zfill(self.N)
-            ax.plot(self.concentrations, self.ss[:, i], label=f'Genotype: {gen}')
+            ax.plot(self.concentrations, self.ss[:, i], label=f'{gen}')
         ax.set_xlabel('Concentration')
         ax.set_ylabel('Fitness')
-        ax.set_title('Fitness Seascape')
-        ax.legend()
+        ax.set_title(f'Drug {self.drug_label} Seascape, Hill Equations')
+        ax.legend(loc="upper left", bbox_to_anchor=(1, 1), title = "Genotype", fontsize = "small")
+        plt.tight_layout()
         plt.show()
 
+    def get_selection_dist(self, selectivity):
+        s_dist = np.random.normal(selectivity, selectivity / 2, self.N)
+        for i in range(len(s_dist)):
+            while not (2 * selectivity >= s_dist[i] >= 0):
+                s_dist[i] = np.random.normal(selectivity, selectivity / 2) #ensure that the random generated number is within bounds
+        return s_dist
 
-class SeascapeFamily():
-    def __init__(self, seascapes):
-        self.seascapes = seascapes # List of Seascape objects
+class EvoParamGenerator():
+    selection_dist = None
+    fitnesses = None
+    resistances = None
 
-    def visualize_(self):
-        pass
+    def __init__(self, N, selectivity):
+        self.N = N
+        self.selectivity = selectivity
+        self.selection_dist = self.get_selection_dist(selectivity, N)
+
+        self.fitnesses = self.get_fitness_dist(self.selection_dist, N)
+
+        self.resistances = self.get_resistance_dist(N)
+
+
+
+    @staticmethod
+    def get_selection_dist(selectivity, N):
+        s_dist = np.random.normal(selectivity, selectivity / 2, N)
+        for i in range(len(s_dist)):
+            while not (2 * selectivity >= s_dist[i] >= 0):
+                s_dist[i] = np.random.normal(selectivity,
+                                             selectivity / 2)  # ensure that the random generated number is within bounds
+        return s_dist
+
+    @staticmethod
+    def get_fitness_dist(selection_dist, N):
+        f_vals = (1 - selection_dist)
+        fitnesses = [1]
+        for mut in range(N):
+            fitnesses = list(np.append(fitnesses, np.array(fitnesses) * f_vals[
+                mut]))  # Adds the fitness of each mutation to the seascape at 0 concentration.
+
+        return np.array(fitnesses)
+
+    @staticmethod
+    def get_resistance_dist(N):
+        r_vals = np.random.uniform(1, 1.5, N)
+        resistances = [1]
+        for mut in range(N):
+            resistances = list(np.append(resistances, np.array(resistances) * r_vals[mut]))
+
+        return np.array(resistances)
+
+
+
+
+
+
+
+
+
+
 
 
 

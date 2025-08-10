@@ -23,6 +23,8 @@ logger = TensorboardLogger(writer)
 
 
 def load_best_policy(p: P, filename : str = "best_policy.pth"):
+    # non-seascape: best_policy.pth
+    # seascape: best_policy_ss.pth
     train_envs, test_envs = WrightFisherEnv.getEnv(4, 2)
     policy = get_ppo_policy(p, train_envs)
     best_policy = load_best_fn(policy=policy, filename=filename)
@@ -56,10 +58,10 @@ def load_random_policy(p: P):
     return policy
 
 
-def train_ppo(p: P):
+def train_wf_landscapes(p: P, seascapes = False):
     # Set up environment
-    train_envs, test_envs = WrightFisherEnv.getEnv(4, 2)
-
+    train_envs, test_envs = WrightFisherEnv.getEnv(4, 2, seascapes=seascapes)
+    print(train_envs.get_env_attr("action_space"))
     policy = get_ppo_policy(p, train_envs)
 
     # Replay buffer and collectors
@@ -72,8 +74,9 @@ def train_ppo(p: P):
     train_collector.reset()
     train_collector.collect(n_step=p.batch_size * 10)
 
+    print(f"Max epochs set to: {p.epochs}")
     # Training
-    trainer = OnpolicyTrainer(
+    drug_trainer = OnpolicyTrainer(
         policy=policy,
         max_epoch=p.epochs,
         batch_size=p.batch_size,
@@ -85,12 +88,14 @@ def train_ppo(p: P):
         step_per_collect=p.batch_size * 10,
         train_fn=lambda epoch, env_step: None,
         test_fn=lambda epoch, env_step: None,
-        stop_fn=lambda mean_rewards: mean_rewards >= -1.0,
+        stop_fn=lambda mean_rewards: None, #changed from mean rewards >= -1
         save_best_fn=save_best_fn,  # ✅ save best model
         logger=logger,
     )
-    result = trainer.run()
-    print(f'Training finished with result: {result}')
+    result = drug_trainer.run()
+
+    print(f'Drug Cycling Training finished with result: {result}')
+
 
     # Testing
     test_result = test_collector.collect(n_episode=p.test_episodes)
@@ -101,6 +106,8 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
     def init_ppo_agent():
         # Model and optimizer
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        action_space = train_envs.get_env_attr("action_space")[0]
+
         net = Net(
             state_shape=p.state_shape,
             hidden_sizes=[128, 128],
@@ -143,20 +150,26 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
         advantage_normalization=True,
         recompute_advantage=False,
     )
+    print("Policy Action Space: ", policy.action_space)
     return policy
+
 
 
 def save_best_fn(policy: BasePolicy):
     # Logger
+    # if seascapes, then save to best_policy_ss.pth
+    # if not seascapes, then save to best_policy.pth
+
+    filename = "best_policy.pth"
     log_path = "./log/wf_ppo"
     os.makedirs(log_path, exist_ok=True)
     writer = SummaryWriter(log_path)
     logger = TensorboardLogger(writer)
 
-    torch.save(policy.state_dict(), os.path.join(log_path, 'best_policy.pth'))
+    torch.save(policy.state_dict(), os.path.join(log_path, filename))
 
-    # Save the entire policy object
-    torch.save(policy, os.path.join(log_path, 'best_complete_policy.pth'))
+    # # Save the entire policy object
+    # torch.save(policy, os.path.join(log_path, 'best_complete_policy.pth'))
 
 
 def load_best_fn(policy: BasePolicy, filename : str = "best_policy.pth"):

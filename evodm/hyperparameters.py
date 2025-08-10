@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Sequence
 
 
 class hyperparameters:
@@ -86,7 +87,7 @@ class hyperparameters:
 @dataclass(frozen=True)
 class Presets:
     state_shape : int
-    num_actions : int
+    num_actions : int | Sequence[int] | None
     lr : float
     epochs : int
     train_steps_per_epoch : int
@@ -95,12 +96,15 @@ class Presets:
     buffer_size : int
 
     @staticmethod
-    def p1() :
-        return Presets(state_shape = 16, num_actions = 15, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=20000)
+    def p1_ss() :
+        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=20000)
 
     @staticmethod
     def p1_test() :
-        return Presets(state_shape = 16, num_actions = 15, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=20000)
+        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=20000)
 
+    @staticmethod
+    def p1_ls():
+        return Presets(state_shape = 16, num_actions = 10, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=20000)
 
 

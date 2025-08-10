@@ -1,7 +1,8 @@
 import pytest
 
-from build.lib.evodm import define_mira_landscapes
+from evodm.evol_game import define_mira_landscapes
 from evodm.landscapes import *
+from numpy.testing import assert_array_equal
 
 @pytest.fixture
 def ls_N3():
@@ -163,3 +164,21 @@ def test_seascape_visualizer():
     for s in ss:
         s.visualize_genotype_fitness()
         s.visualize_concentration_effects()
+
+
+def test_seascape_selectivity():
+    s = Seascape(N=4, sigma=0.5, selectivity=0.05)
+    s.visualize_concentration_effects()
+    print(s.ss)
+
+
+def test_initial_params_set(): #Refactor this abomination of a test case
+    s = Seascape #the class
+    s1 = s(N=4, sigma = 0.5, selectivity=0.05)
+    s2 = s(N=4, sigma = 0.5, selectivity=0.05)
+    assert_array_equal(s.resistances, s1.resistances)
+    assert_array_equal(s1.resistances, s2.resistances)
+    assert_array_equal(s.selection_dist, s1.selection_dist)
+    assert_array_equal(s1.selection_dist, s2.selection_dist)
+    assert_array_equal(s.fitnesses, s1.fitnesses)
+    assert_array_equal(s1.fitnesses, s2.fitnesses)
