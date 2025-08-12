@@ -1,16 +1,19 @@
+import copy
+import itertools
+import math
+
+import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
 import scipy.linalg as la
 import scipy.optimize as op
-from scipy.stats import pearsonr, truncnorm
 import scipy.sparse as sparse
-import copy
-import math
-import itertools
-import networkx as nx
-import matplotlib.pyplot as plt
+from scipy.stats import pearsonr
+
 
 def flatten(list_of_lists):
     return list(itertools.chain.from_iterable(list_of_lists))
+
 
 class Landscape:
     """
@@ -58,7 +61,8 @@ class Landscape:
     get_steadystate_rounds(correl)
         Calculates number of steps to reach steady state for paired landscape evolution
     """
-    def __init__(self, N, sigma, ls=None, parent=None, num_jumps = 1, dense = False,
+
+    def __init__(self, N, sigma, ls=None, parent=None, num_jumps=1, dense=False,
                  compute_tm=False):
         """
         Initializes landscape objects with given N and sigma to simulate epistasis (zero sigma produces an additive landscape with exactly one global maximum).
@@ -69,19 +73,23 @@ class Landscape:
         self.Bs = None
         self.num_jumps = num_jumps
         if ls is None:
-            self.ls = np.array([0]) # Initializes landscape vector with fitness 0 in the first (wildtype) index
-            fitness = np.random.uniform(-1, 1, N) # Generates N fitness values between -1 and 1 that will be used to generate the additive landscape.
-            for mut in range(N):                                         # Loop that generates additive fitness landscape from the above "fitness" uniform random numbers.
+            self.ls = np.array([0])  # Initializes landscape vector with fitness 0 in the first (wildtype) index
+            fitness = np.random.uniform(-1, 1,
+                                        N)  # Generates N fitness values between -1 and 1 that will be used to generate the additive landscape.
+            for mut in range(
+                    N):  # Loop that generates additive fitness landscape from the above "fitness" uniform random numbers.
                 self.ls = np.append(self.ls, self.ls + fitness[mut])
-            noise = np.random.normal(0, sigma, 2**N)                     # Generates array of gaussian niose length 2^N to match size of A landscape.
-            self.ls = self.ls + noise                                    # Adds gaussian generated noise to A landscape at each A genotype
-        else: self.ls = ls
+            noise = np.random.normal(0, sigma,
+                                     2 ** N)  # Generates array of gaussian niose length 2^N to match size of A landscape.
+            self.ls = self.ls + noise  # Adds gaussian generated noise to A landscape at each A genotype
+        else:
+            self.ls = ls
         if parent is not None: self.parent = parent
-        
+
         if compute_tm:
             self.get_TM(store=True)
 
-    def get_TM(self, store=True, update = False):
+    def get_TM(self, store=True, update=False):
         """
         Returns the transition matrix for this landscape. If store=True, it will
         be saved in a field of this object (TM) for later use. If a stored copy already
@@ -93,32 +101,36 @@ class Landscape:
 
         new code:  fitter = list(filter(lambda x: (adjFit[x]-self.ls[i]) > 0.00001, mut))
         """
-        if not hasattr(self, 'TM') and not update: #give the option to update the transition matrix of a given landscape
-            mut = range(self.N)  
+        if not hasattr(self,
+                       'TM') and not update:  # give the option to update the transition matrix of a given landscape
+            mut = range(self.N)
             if self.dense:
-                TM = np.zeros((2**self.N,2**self.N))
-            else:                                             # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
-                #build up the matrix using a lil array to save compute when constructing the matrix
-                TM = sparse.lil_matrix((2**self.N,2**self.N)) # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+                TM = np.zeros((2 ** self.N, 2 ** self.N))
+            else:  # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+                # build up the matrix using a lil array to save compute when constructing the matrix
+                TM = sparse.lil_matrix((2 ** self.N,
+                                        2 ** self.N))  # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
 
-            for i in range(2**self.N):
-                                     # For the current genotype i, creates list of genotypes that are 1 mutation away.
-                adjMut = self.define_adjMut(mut = mut, i = i) #This function implements new possibilities for HGT
-                fitter = [j for j in adjMut if self.ls[j] - self.ls[i] > 0.00001]                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+            for i in range(2 ** self.N):
+                # For the current genotype i, creates list of genotypes that are 1 mutation away.
+                adjMut = self.define_adjMut(mut=mut, i=i)  # This function implements new possibilities for HGT
+                fitter = [j for j in adjMut if self.ls[j] - self.ls[
+                    i] > 0.00001]  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
-               #fitter = list(filter(lambda x: (adjFit[x]-self.ls[i]) > 0.00001, mut))                      # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
+                # fitter = list(filter(lambda x: (adjFit[x]-self.ls[i]) > 0.00001, mut))                      # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
 
                 fitLen = len(fitter)
-                if fitLen == 0:                                          # If no mutations are more fit, stay in current genotype.
+                if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
                     TM[i, i] = 1
                 else:
-                    tranVal = 1.0 / fitLen                                                   # If at least one mutation is more fit, assign a fitness of 1/(# of more fit mutatnts) to each accessible genotype.
+                    tranVal = 1.0 / fitLen  # If at least one mutation is more fit, assign a fitness of 1/(# of more fit mutatnts) to each accessible genotype.
                     for f in fitter:
-                        TM[f,i] = tranVal
-            if not self.dense: TM = TM.tocsr() #convert to csr format for faster matrix multiplication
-            if store: self.TM = TM # store the transition matrix for this landscape object
+                        TM[f, i] = tranVal
+            if not self.dense: TM = TM.tocsr()  # convert to csr format for faster matrix multiplication
+            if store: self.TM = TM  # store the transition matrix for this landscape object
             return TM
-        else: return self.TM
+        else:
+            return self.TM
 
     def define_adjMut(self, mut, i):
         """
@@ -127,28 +139,30 @@ class Landscape:
         """
         adjMut = [i ^ (1 << m) for m in mut]
         if self.num_jumps > 1:
-            extra_edges=[] #The rules - no gain of allele and loss of allele on same jump - only multi-gains and multi-losses
-            for jumps in range(2, self.num_jumps+1): #self.num_jumps + 1 because of pythons stupid dumb 0 indexing scheme that I hate
-                for j in range(2**self.N):
+            extra_edges = []  # The rules - no gain of allele and loss of allele on same jump - only multi-gains and multi-losses
+            for jumps in range(2,
+                               self.num_jumps + 1):  # self.num_jumps + 1 because of pythons stupid dumb 0 indexing scheme that I hate
+                for j in range(2 ** self.N):
                     if j == i:
                         continue
-                    #this checks that the original mutations are present in any multi-jumps
-                    elif bin(j).count("1") == (bin(i).count("1") + jumps) and i == i & j: #check if test_mut is an allowable forward transition
+                    # this checks that the original mutations are present in any multi-jumps
+                    elif bin(j).count("1") == (bin(i).count(
+                            "1") + jumps) and i == i & j:  # check if test_mut is an allowable forward transition
                         extra_edges.append(j)
-                    #This checks that we didn't gain and lose in a single step.
-                    elif bin(j).count("1") == (bin(i).count("1") - jumps) and j == i & j: #some condition for backward double losses
+                    # This checks that we didn't gain and lose in a single step.
+                    elif bin(j).count("1") == (
+                            bin(i).count("1") - jumps) and j == i & j:  # some condition for backward double losses
                         extra_edges.append(j)
                     else:
                         continue
 
             for t in iter(extra_edges):
                 adjMut.append(t)
-            
+
             adjMut = [*set(adjMut)]
 
         return adjMut
-        
-            
+
     def get_TM_phenom(self, phenom, store=True):
         """
         Returns the transition matrix for this landscape, with phenomenological stepping (see Tan and Gore 2012). If store=True, it will
@@ -156,29 +170,34 @@ class Landscape:
         exists for this landscape, it will be returned with no wasted computation.
         """
         if not hasattr(self, 'TM'):
-            mut = range(self.N)                                               # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
-            TM = sparse.csr_matrix((2**self.N,2**self.N))                              # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+            mut = range(self.N)  # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+            TM = sparse.csr_matrix((2 ** self.N,
+                                    2 ** self.N))  # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
 
-            for i in range(2**self.N):
-                adjMut = [i ^ (1 << m) for m in mut]                          # For the current genotype i, creates list of genotypes that are 1 mutation away.
+            for i in range(2 ** self.N):
+                adjMut = [i ^ (1 << m) for m in
+                          mut]  # For the current genotype i, creates list of genotypes that are 1 mutation away.
 
-                adjFit = [self.ls[j] for j in adjMut]                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+                adjFit = [self.ls[j] for j in
+                          adjMut]  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
-                fitter = list(filter(lambda x: (adjFit[x]-self.ls[i]) > 0.00001, mut))    # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
+                fitter = list(filter(lambda x: (adjFit[x] - self.ls[i]) > 0.00001,
+                                     mut))  # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
 
                 fitLen = len(fitter)
-                if fitLen == 0:                                               # If no mutations are more fit, stay in current genotype.
-                    TM[i,i] = 1
+                if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
+                    TM[i, i] = 1
                 else:
                     dfit = np.power([adjFit[f] - self.ls[i] for f in fitter], phenom)
-                    prob_mut = np.divide(dfit,np.sum(dfit))
+                    prob_mut = np.divide(dfit, np.sum(dfit))
                     count = 0
                     for f in fitter:
-                        TM[adjMut[f],i] = prob_mut[count]
+                        TM[adjMut[f], i] = prob_mut[count]
                         count += 1
-            if store: self.TM = TM # store the transition matrix for this landscape object
+            if store: self.TM = TM  # store the transition matrix for this landscape object
             return TM
-        else: return self.TM
+        else:
+            return self.TM
 
     def get_TM_phenom_inf(self, store=False):
         """
@@ -187,28 +206,31 @@ class Landscape:
         exists for this landscape, it will be returned with no wasted computation.
         """
         if not hasattr(self, 'TM'):
-            mut = range(self.N)                                               # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
-            TM = sparse.csr_matrix((2**self.N,2**self.N))                              # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+            mut = range(self.N)  # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+            TM = sparse.csr_matrix((2 ** self.N,
+                                    2 ** self.N))  # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
 
-            for i in range(2**self.N):
-                adjMut = [i ^ (1 << m) for m in mut]                          # For the current genotype i, creates list of genotypes that are 1 mutation away.
+            for i in range(2 ** self.N):
+                adjMut = [i ^ (1 << m) for m in
+                          mut]  # For the current genotype i, creates list of genotypes that are 1 mutation away.
 
-                adjFit = [self.ls[j] for j in adjMut]                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+                adjFit = [self.ls[j] for j in
+                          adjMut]  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
-                fitter = list(filter(lambda x: (adjFit[x]-self.ls[i]) > 0.00001, mut))    # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
+                fitter = list(filter(lambda x: (adjFit[x] - self.ls[i]) > 0.00001,
+                                     mut))  # Finds which indices of adjFit are more fit than the current genotype and thus available for mutation.
 
                 fitLen = len(fitter)
-                if fitLen == 0:                                               # If no mutations are more fit, stay in current genotype.
-                    TM[i,i] = 1
+                if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
+                    TM[i, i] = 1
                 else:
                     fitMax = np.argmax(adjFit)
-                    TM[adjMut[fitMax],i] = 1
+                    TM[adjMut[fitMax], i] = 1
 
-            if store: self.TM = TM # store the transition matrix for this landscape object
+            if store: self.TM = TM  # store the transition matrix for this landscape object
             return TM
-        else: return self.TM
-
-
+        else:
+            return self.TM
 
     ###----------------------------NEVER USED----------------------------###
     # NO USES
@@ -222,6 +244,7 @@ class Landscape:
                   mut]  # For the current genotype index, creates list of genotypes that are 1 mutation away.
         adjFit = [self.ls[j] for j in adjMut]
         return adjMut, adjFit
+
     def find_two_step_neighbors(self, index):
         """
         Returns a list of indicies and a list of fitnesses in this landscape
@@ -244,7 +267,7 @@ class Landscape:
         generalizeable to finding n-step neighbors
         """
         adjMut = []
-        for mut in range(2**self.N):
+        for mut in range(2 ** self.N):
             count = 0
             for i in range(self.N):
                 if ((index >> i) & 1) != (mut >> i) & 1:
@@ -261,17 +284,17 @@ class Landscape:
         Returns a list of indices of local maxes in this landscape, allowing for multi-step jumps
         """
         tm = self.get_TM()
-        indices = [i for i in range(2**self.N) if tm[i,i] == 1]
+        indices = [i for i in range(2 ** self.N) if tm[i, i] == 1]
         return indices
 
     def find_global_max(self):
         max_fit = np.max(self.ls)
-        gmax_index = [i for i in range(2**self.N) if self.ls[i] == max_fit][0]
-        return(gmax_index)
+        gmax_index = [i for i in range(2 ** self.N) if self.ls[i] == max_fit][0]
+        return (gmax_index)
 
     def get_total_edges(self):
         tm = self.get_TM()
-        return np.sum(tm>0)
+        return np.sum(tm > 0)
 
     def find_max_indices(self):
         """
@@ -279,10 +302,10 @@ class Landscape:
         """
         mut = range(self.N)
         maxes = []
-        for i in range(2**self.N):
+        for i in range(2 ** self.N):
             adjMut = [i ^ (1 << m) for m in mut]
             adjFit = [self.ls[i] for i in adjMut]
-            fitter = list(filter(lambda x: (adjFit[x]-self.ls[i]) > 0.00001, mut))
+            fitter = list(filter(lambda x: (adjFit[x] - self.ls[i]) > 0.00001, mut))
             fitLen = len(fitter)
             if fitLen == 0:
                 maxes.append(i)
@@ -294,11 +317,11 @@ class Landscape:
         """
         mut = range(self.N)
         mins = []
-        for i in range(2**self.N):
+        for i in range(2 ** self.N):
             adjMut = [i ^ (1 << m) for m in mut]
             adjFit = [self.ls[i] for i in adjMut]
-            fitter = list(filter(lambda x: (adjFit[x]-self.ls[i]) > 0.00001, mut))
-            fitLen = len(fitter) 
+            fitter = list(filter(lambda x: (adjFit[x] - self.ls[i]) > 0.00001, mut))
+            fitLen = len(fitter)
             if fitLen == self.N:
                 mins.append(i)
         return mins
@@ -314,13 +337,13 @@ class Landscape:
         if p0 is not None:
             self.p0 = p0
         else:
-            p0 = sparse.csr_matrix((2**self.N,1))
-            p0[0,0] = 1
-        
+            p0 = sparse.csr_matrix((2 ** self.N, 1))
+            p0[0, 0] = 1
+
         TM_stepped = TM ** steps
         return TM_stepped.dot(p0)
 
-###---------NOT USED------------------###
+    ###---------NOT USED------------------###
     def evolve_dense(self, steps, p0):
         """
         Returns an array of genotype occupation probabilities after stepping in
@@ -330,7 +353,7 @@ class Landscape:
         if p0 is not None:
             self.p0 = p0
         else:
-            p0 = np.zeros((2**self.N,1))
+            p0 = np.zeros((2 ** self.N, 1))
             p0[0][0] = 1
         return np.dot(np.linalg.matrix_power(TM, steps), p0)
 
@@ -346,15 +369,14 @@ class Landscape:
         if steps % 2 == 0: raise Exception("Only odd step counts allowed")
         ATM = self.get_TM()
         BTM = B.get_TM(store_TM)
-        p0 = np.zeros((2**self.N,1))
+        p0 = np.zeros((2 ** self.N, 1))
         p0[0][0] = 1
         p0 = np.dot(ATM, p0)
         if steps == 1:
             return p0
         else:
-            ABTM = np.dot(ATM,BTM)
-            return np.dot(np.linalg.matrix_power(ABTM, (steps-1)//2), p0)
-
+            ABTM = np.dot(ATM, BTM)
+            return np.dot(np.linalg.matrix_power(ABTM, (steps - 1) // 2), p0)
 
     ###-----------------------------------###
     def evolve_phenom(self, steps, phenom, store_TM=False):
@@ -363,7 +385,7 @@ class Landscape:
         this landscape steps times.
         """
         TM = self.get_TM_phenom(phenom, store_TM)
-        p0 = np.zeros((2**self.N,1))
+        p0 = np.zeros((2 ** self.N, 1))
         p0[0][0] = 1
         return np.dot(np.linalg.matrix_power(TM, steps), p0)
 
@@ -373,7 +395,7 @@ class Landscape:
         this landscape steps times.
         """
         TM = self.get_TM_phenom_inf(store_TM)
-        p0 = np.zeros((2**self.N,1))
+        p0 = np.zeros((2 ** self.N, 1))
         p0[0][0] = 1
         return np.dot(np.linalg.matrix_power(TM, steps), p0)
 
@@ -386,14 +408,14 @@ class Landscape:
         if steps % 2 == 0: raise Exception("Only odd step counts allowed")
         ATM = self.get_TM_phenom(phenom)
         BTM = B.get_TM_phenom(phenom, store_TM)
-        p0 = np.zeros((2**self.N,1))
+        p0 = np.zeros((2 ** self.N, 1))
         p0[0][0] = 1
         p0 = np.dot(ATM, p0)
         if steps == 1:
             return p0
         else:
-            ABTM = np.dot(ATM,BTM)
-            return np.dot(np.linalg.matrix_power(ABTM, (steps-1)//2), p0)
+            ABTM = np.dot(ATM, BTM)
+            return np.dot(np.linalg.matrix_power(ABTM, (steps - 1) // 2), p0)
 
     def evolve_switching_phenom_inf(self, B, steps, store_TM=False):
         """
@@ -404,14 +426,14 @@ class Landscape:
         if steps % 2 == 0: raise Exception("Only odd step counts allowed")
         ATM = self.get_TM_phenom_inf()
         BTM = B.get_TM_phenom_inf(store_TM)
-        p0 = np.zeros((2**self.N,1))
+        p0 = np.zeros((2 ** self.N, 1))
         p0[0][0] = 1
         p0 = np.dot(ATM, p0)
         if steps == 1:
             return p0
         else:
-            ABTM = np.dot(ATM,BTM)
-            return np.dot(np.linalg.matrix_power(ABTM, (steps-1)//2), p0)
+            ABTM = np.dot(ATM, BTM)
+            return np.dot(np.linalg.matrix_power(ABTM, (steps - 1) // 2), p0)
 
     ###----------------NOT USED-------------------###
     def calc_fitness(self, steps, store_TMs=True):
@@ -473,20 +495,17 @@ class Landscape:
 
     ###--------------------------------------------------------###
 
-
-
-
     def generate_correlated_landscapes(self, correl):
         """ 
         generates correlated landscapes according to the np.linspace specified in 'correl'
         """
-        
-        Bs = [None]*len(correl)
-        Astd = np.std(self.ls, ddof=1) # have to use ddof=1 to match matlab sample std
+
+        Bs = [None] * len(correl)
+        Astd = np.std(self.ls, ddof=1)  # have to use ddof=1 to match matlab sample std
         Amean = np.mean(self.ls)
-        A = (self.ls - Amean)/Astd
-        y0 = np.random.uniform(-1,1,(2**self.N,2**self.N))
-        M = la.orth(np.array([np.ones(2**self.N), A]).T)
+        A = (self.ls - Amean) / Astd
+        y0 = np.random.uniform(-1, 1, (2 ** self.N, 2 ** self.N))
+        M = la.orth(np.array([np.ones(2 ** self.N), A]).T)
         dp = np.dot(y0.T, M)
         y0 = y0 - np.dot(M, dp.T)
         y0_std = np.array([[np.std(row, ddof=1) for row in y0]])
@@ -510,12 +529,12 @@ class Landscape:
                 y = Amean + y0 * Astd
                 Bs[i] = Landscape(self.N, self.sigma, ls=y, parent=self)
             if r < 1 and r > 0:
-                fun = lambda beta : r - pearsonr(x, y0 + beta*(x-y0))[0]
+                fun = lambda beta: r - pearsonr(x, y0 + beta * (x - y0))[0]
                 beta = op.brentq(fun, 0, 1)
-                y = y0 + beta * (x-y0)
+                y = y0 + beta * (x - y0)
                 y = Amean + y * Astd
                 Bs[i] = Landscape(self.N, self.sigma, ls=y.T, parent=self)
-        
+
         count = 0
         for B in Bs:
             temp_landscape = Landscape(self.N, self.sigma)
@@ -523,11 +542,11 @@ class Landscape:
 
             sorted_self = np.sort(B.ls)
 
-            final_landscape = np.empty((2**self.N))
+            final_landscape = np.empty((2 ** self.N))
 
-            for i in range(2**self.N):
+            for i in range(2 ** self.N):
                 index = np.where(B.ls == sorted_self[i])[0]
-                #index = next((i for i, x in enumerate(self.ls) if x == sorted_self[i]), None)
+                # index = next((i for i, x in enumerate(self.ls) if x == sorted_self[i]), None)
 
                 final_landscape[index] = sorted_temp[i]
 
@@ -535,6 +554,7 @@ class Landscape:
             count += 1
 
         return Bs
+
     ###----------------------------NOT USED-----------------------------###
     def calc_nonzero_steadystate_prob(self, steps):
         """
@@ -548,17 +568,17 @@ class Landscape:
         if self.Bs is None: raise Exception("Must call generate_correlated_landscapes() first.")
         Bs = self.Bs
         N = self.N
-        epsilon = np.finfo(np.float64).eps # numpy float64 precision
+        epsilon = np.finfo(np.float64).eps  # numpy float64 precision
         pAonly = self.evolve(steps)
         Aonly_nonzero = 0
         for i in range(len(pAonly)):
             if pAonly[i] > epsilon:
                 Aonly_nonzero += 1
-        Aonly_nonzero /= 2**N
-        #np.count_nonzero(pAonly) / 2**N
+        Aonly_nonzero /= 2 ** N
+        # np.count_nonzero(pAonly) / 2**N
 
-        pA = np.zeros((len(Bs),2**N))
-        pB = np.zeros((len(Bs),2**N))
+        pA = np.zeros((len(Bs), 2 ** N))
+        pB = np.zeros((len(Bs), 2 ** N))
         AB = np.zeros(len(Bs))
 
         for i in range(len(Bs)):
@@ -566,13 +586,13 @@ class Landscape:
             pB[i] = np.dot(Bs[i].get_TM(), pA[i]).flatten()
 
         pAB = (pA + pB) / 2.0
-        #AB = np.count_nonzero(pAB, axis = 1) / 2**N
+        # AB = np.count_nonzero(pAB, axis = 1) / 2**N
         AB_nonzero = np.zeros(len(pAB))
         for i in range(len(AB)):
             for j in range(len(pAB[i])):
-                if pAB[i][j] > 1e-10:#epsilon:
+                if pAB[i][j] > 1e-10:  # epsilon:
                     AB_nonzero[i] += 1
-        AB_nonzero = np.divide(AB_nonzero, 2**N)
+        AB_nonzero = np.divide(AB_nonzero, 2 ** N)
 
         return (Aonly_nonzero, AB_nonzero, pAonly, pAB)
 
@@ -618,8 +638,10 @@ class Landscape:
                     if m in Amaxes:
                         totalmaxfit += self.ls[m]
                         count += 1
-                if totalmaxfit != 0: switching_avg_max_fit.append(totalmaxfit / count)
-                else: switching_avg_max_fit.append(float('nan'))
+                if totalmaxfit != 0:
+                    switching_avg_max_fit.append(totalmaxfit / count)
+                else:
+                    switching_avg_max_fit.append(float('nan'))
             return np.array(switching_avg_max_fit)
 
     def get_steadystate_rounds(self, correl):
@@ -636,21 +658,21 @@ class Landscape:
         prev = []
         for i in range(len(correl)):
             B = Bs[i]
-            prev.append(self.evolve_switching(B, steps, store_TM=True)) # evolve 1 step first for comparison
+            prev.append(self.evolve_switching(B, steps, store_TM=True))  # evolve 1 step first for comparison
         flag = True
         while flag:
             p = [[] for _ in range(len(correl))]
-            steps += 2 # only odd step counts possible for switching
+            steps += 2  # only odd step counts possible for switching
             for i in range(len(correl)):
-                if not ss_found[i]: # only do the calculation for Bs that haven't found SS yet
+                if not ss_found[i]:  # only do the calculation for Bs that haven't found SS yet
                     B = Bs[i]
                     p[i] = self.evolve_switching(B, steps, store_TM=True)
-                    if la.norm(prev[i] - p[i]) < epsilon: # condition for steady state
-                        ss_found[i] = True # found steady state for this correlation
-                        steps_list[i] = steps # record number of steps to SS for this correlation
+                    if la.norm(prev[i] - p[i]) < epsilon:  # condition for steady state
+                        ss_found[i] = True  # found steady state for this correlation
+                        steps_list[i] = steps  # record number of steps to SS for this correlation
                     prev[i] = p[i]
             flag = False
-            for v in ss_found: # check if SS has been found for all the correlations
+            for v in ss_found:  # check if SS has been found for all the correlations
                 if not v:
                     flag = True
                     break
@@ -663,8 +685,6 @@ class Landscape:
         return self.__repr__()
 
     ###---------------------------------------------------------###
-
-
 
     def graph(self, p=None, verbose=False):
         """
@@ -687,7 +707,7 @@ class Landscape:
         genotypes = [(genotypes[i], self.ls[i]) for i in range(len(genotypes))]
 
         # Build hierarchical structure for N-bit sequences that differ by 1 bit at each level
-        hierarchy = [[] for i in range(N+1)]
+        hierarchy = [[] for i in range(N + 1)]
         for g in genotypes: hierarchy[g[0].count("1")].append(g)
 
         # Add all unique bit sequences as nodes to the graph
@@ -695,11 +715,11 @@ class Landscape:
         G.add_nodes_from(genotypes)
 
         # Add edges with appropriate weights depending on the TM
-        sf = 5 # edge thickness scale factor
+        sf = 5  # edge thickness scale factor
         for i in range(len(TM)):
             for j in range(len(TM[i])):
                 if TM[i][j] != 0 and i != j:
-                    G.add_edge(genotypes[i], genotypes[j], weight=sf*TM[i][j])
+                    G.add_edge(genotypes[i], genotypes[j], weight=sf * TM[i][j])
 
         # Find the local & global min/max
         maxes = []
@@ -715,10 +735,10 @@ class Landscape:
         # global max will always have fitness = 1, and global min fitness = 0
         globalmax = 0
         globalmin = 0
-        for i in range(1,len(maxes)):
+        for i in range(1, len(maxes)):
             if maxes[i][1] > maxes[globalmax][1]:
                 globalmax = i
-        for i in range(1,len(mins)):
+        for i in range(1, len(mins)):
             if mins[i][1] < mins[globalmin][1]:
                 globalmin = i
         globalmax = maxes[globalmax]
@@ -737,14 +757,14 @@ class Landscape:
 
         # Store all the edge weights in a list so they can be used to control the edge widths when drawn
         edges = G.edges()
-        weights = [G[u][v]['weight'] for u,v in edges]
+        weights = [G[u][v]['weight'] for u, v in edges]
 
         # just using spring layout to generate an initial dummy pos dict
         pos = nx.spring_layout(G)
 
         # calculate how many entires in the longest row, it will be N choose N/2
         # because the longest row will have every possible way of putting N/2 1s (or 0s) into N bits
-        maxLen = math.factorial(N) / math.factorial(N//2)**2
+        maxLen = math.factorial(N) / math.factorial(N // 2) ** 2
 
         # Position the nodes in a layered hierarchical structure by modifying pos dict
         y = 1
@@ -762,23 +782,21 @@ class Landscape:
         # Print node structure to console
         if verbose:
             for i in range(len(hierarchy)):
-                print(("Row {}: " + str([h[0] for h in hierarchy[i]]).strip('[]')).format(i+1))
+                print(("Row {}: " + str([h[0] for h in hierarchy[i]]).strip('[]')).format(i + 1))
             print()
 
         node_size = 500
         if p is not None:
-            node_size = [75 + 1000*val for val in p]
+            node_size = [75 + 1000 * val for val in p]
 
         # Draw the graph
         plt.axis('off')
         node_vals = [g[1] for g in G.nodes()]
-        nx.draw(G, pos, with_labels=False, width=weights, linewidths=1, cmap=plt.get_cmap('Greys'), node_color=node_vals,node_size=node_size)
-        nx.draw_networkx_labels(G,pos,labels,font_size=16,font_color='red') # labels for min/max nodes
+        nx.draw(G, pos, with_labels=False, width=weights, linewidths=1, cmap=plt.get_cmap('Greys'),
+                node_color=node_vals, node_size=node_size)
+        nx.draw_networkx_labels(G, pos, labels, font_size=16, font_color='red')  # labels for min/max nodes
         ax = plt.gca()
         ax.collections[0].set_edgecolor("#000000")
-
-
-
 
 
 class Seascape(Landscape):
@@ -790,9 +808,11 @@ class Seascape(Landscape):
     fitnesses = None
     resistances = None
     selection_dist = None
+    concentrations_in_M = [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005]
 
-    def __init__(self, N, sigma, ss=None, ls_max = None, parent=None, num_jumps=1, dense=False,
-                 compute_tm=False, concentrations=[0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005], hill_coeff=1, ic50s = None, selectivity = None, drug_label = None):
+    def __init__(self, N, sigma, seascape_fitness_data=None, ls_max=None, parent=None, num_jumps=1, dense=False,
+                 compute_tm=False, concentrations=concentrations_in_M,
+                 hill_coeff=1, ic50s=None, selectivity=None, drug_label=None):
         """
         Initializes seascape objects with given N and sigma to simulate epistasis (zero sigma produces an additive landscape with exactly one global maximum).
         """
@@ -806,52 +826,74 @@ class Seascape(Landscape):
         self.Bs = None
         self.num_jumps = num_jumps
         self.concentrations = concentrations
-
         self.hill_coeff = hill_coeff
 
         if ic50s is None:
-            self.ic50s = np.zeros(2**N)
-            for i in range(2**N):
-                self.ic50s[i] = np.random.uniform(0.01, 0.0001) # Generates a random IC50 for each genotype between the lowest and highest concentrations.
+            self.ic50s = np.zeros(2 ** N)
+            for i in range(2 ** N):
+                self.ic50s[i] = np.random.uniform(0.01,
+                                                  0.0001)  # Generates a random IC50 for each genotype between the lowest and highest concentrations.
         else:
             self.ic50s = ic50s
 
-
         self.selectivity = selectivity
 
-        #Get drug label (if given, otherwise none)
+        # Get drug label (if given, otherwise none)
         if drug_label is not None:
             self.drug_label = str(drug_label)
         else:
             self.drug_label = ""
 
-
-
         ## Use IC50s to generate hill equation for each drug
         ## then plug in concentrations to get fitnesses
         ## finally use the fitnesses to additively generate the seascape and then add noise on top of everything.
-        if ss is None and ls_max is None:
-            if selectivity is None:
-                self.ss = np.zeros((len(self.concentrations),)) # Initializes seascape with zeros for each concentration and each genotype.
-                self.ss[-1, 0] = 0 # 0 drug concentration initially set to 0 fitness for the wild type (set to 1 later).
-                fitnesses = np.random.uniform(-1, 1, N) # each mutation gets a random fitness that will be used to additively generate the seascape.
-                for mut in range(N):
-                    np.append(self.ss[-1], self.ss[-1] + fitnesses[mut]) # Adds the fitness of each mutation to the seascape at 0 concentration.
 
-                self.ss[-1, 0] = 1 # Sets the wild type fitness at 0 concentration to 1.
+        if seascape_fitness_data is not None:  # we are getting entire data for all concentrations (so this should be favored)
+            self.ss = seascape_fitness_data
+
+        elif ls_max is not None:  # we are getting data for maximum concentration only (second priority)
+            # assume the provided landscape is the minimum nonzero dosage landscape
+            self.ss = np.zeros((len(self.concentrations), 2 ** N))
+
+            self.ss[len(self.concentrations) - 2,
+            :] = ls_max  # set the smallest nonzero concentration to the provided landscape
+            ## Now we can generate hill equations for each genotype and extend to all concentrations
+
+            self.ss[-1, :] = self.ss[len(self.concentrations) - 2, :] * (1 + np.exp(
+                -(np.log10(self.ic50s) - np.log10(self.concentrations[len(self.concentrations) - 2])) / hill_coeff))
+
+            for i in range(len(concentrations) - 2):
+                for j in range(2 ** N):
+                    # using seascapes as defined by Eshan King's paper
+                    self.ss[i, j] = self.ss[-1, j] / (
+                            1 + np.exp(-(np.log10(self.ic50s[j]) - np.log10(self.concentrations[i])) / hill_coeff))
+
+        else:
+            if selectivity is None:
+                self.ss = np.zeros((len(
+                    self.concentrations),))  # Initializes seascape with zeros for each concentration and each genotype.
+                self.ss[
+                    -1, 0] = 0  # 0 drug concentration initially set to 0 fitness for the wild type (set to 1 later).
+                fitnesses = np.random.uniform(-1, 1,
+                                              N)  # each mutation gets a random fitness that will be used to additively generate the seascape.
+                for mut in range(N):
+                    np.append(self.ss[-1], self.ss[-1] + fitnesses[
+                        mut])  # Adds the fitness of each mutation to the seascape at 0 concentration.
+
+                self.ss[-1, 0] = 1  # Sets the wild type fitness at 0 concentration to 1.
                 # now we can generate hill equations for each genotype
                 for i in range(len(concentrations)):
-                    for j in range(2**N):
-                        #using seascapes as defined by Eshan King's paper
-                        self.ss[i, j] = self.ss[-1, j]/ (1 + np.exp((self.ic50s[j] - np.log10(i))/hill_coeff))
+                    for j in range(2 ** N):
+                        # using seascapes as defined by Eshan King's paper
+                        self.ss[i, j] = self.ss[-1, j] / (1 + np.exp((self.ic50s[j] - np.log10(i)) / hill_coeff))
 
                 # Add noise to the seascape
                 if self.sigma != 0:
-                    noise = np.random.normal(0, self.sigma, (len(self.concentrations), 2**N))
+                    noise = np.random.normal(0, self.sigma, (len(self.concentrations), 2 ** N))
                     self.ss += noise
 
-            elif selectivity is not None:
-                self.ss = np.zeros((len(self.concentrations), 2**self.N))
+            else:
+                self.ss = np.zeros((len(self.concentrations), 2 ** self.N))
 
                 if not cls.params_set:
                     epg = EvoParamGenerator(N, selectivity)
@@ -860,35 +902,17 @@ class Seascape(Landscape):
                     cls.resistances = epg.resistances
                     cls.params_set = True
 
-
                 fitnesses = cls.fitnesses
                 resistances = cls.resistances
 
-
                 for i in range(len(concentrations)):
-                    for j in range(2**N):
-                        #using seascapes as defined by Eshan King's paper
+                    for j in range(2 ** N):
+                        # TODO using seascapes as defined by Eshan King's paper (link missing)
 
-                        self.ss[i, j] = fitnesses[j] / (1 + np.exp(-(np.log10(self.ic50s[j]) - resistances[j] * np.log10(self.concentrations[i])) / hill_coeff))
+                        self.ss[i, j] = fitnesses[j] / (1 + np.exp(-(
+                                np.log10(self.ic50s[j]) - resistances[j] * np.log10(
+                            self.concentrations[i])) / hill_coeff))
 
-
-
-        elif ls_max is not None:
-            #assume the provided landscape is the minimum nonzero dosage landscape
-            self.ss = np.zeros((len(self.concentrations), 2**N))
-
-            self.ss[len(self.concentrations)-2, :] = ls_max # set the smallest nonzero concentration to the provided landscape
-            ## Now we can generate hill equations for each genotype and extend to all concentrations
-
-            self.ss[-1, :] = self.ss[len(self.concentrations)-2, :]*(1+np.exp(-(np.log10(self.ic50s) - np.log10(self.concentrations[len(self.concentrations)-2]))/hill_coeff))
-
-            for i in range(len(concentrations)-2):
-                for j in range(2 ** N):
-                    # using seascapes as defined by Eshan King's paper
-                    self.ss[i, j] = self.ss[-1, j] / (1 + np.exp(-(np.log10(self.ic50s[j]) - np.log10(self.concentrations[i])) / hill_coeff))
-
-        else:
-            self.ss = ss
         if parent is not None: self.parent = parent
 
         # print(self.ss)
@@ -916,7 +940,8 @@ class Seascape(Landscape):
                                    adjMut])  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
                 fittest = adjMut[np.argmax(adjFit)]  # Find the most fit mutation
-                if fittest < self.ss[conc, i]:  # If the most fit mutation is less fit than the current genotype, stay in the current genotype.
+                if fittest < self.ss[
+                    conc, i]:  # If the most fit mutation is less fit than the current genotype, stay in the current genotype.
                     TM[i, i] = 1
                 else:
                     TM[i, fittest] = 1
@@ -924,10 +949,7 @@ class Seascape(Landscape):
             TMs.append(TM)
         return np.array(TMs)
 
-
-
-
-    def get_TM(self, conc = -1, store=True):
+    def get_TM(self, conc=-1, store=True):
         """
         Returns the transition matrix for this landscape, accounting for dosage concentrations.
         Args:
@@ -943,14 +965,15 @@ class Seascape(Landscape):
         # if fitness is higher than current, transition matrix from original index to new index is
 
         if not hasattr(self, 'TM'):
-            mut = range(self.N)                                               # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
-            TMs = self.init_TM()                           # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+            mut = range(self.N)  # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+            TMs = self.init_TM()  # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
 
-            if store: self.TMs = TMs # store the transition matrix for this landscape object
+            if store: self.TMs = TMs  # store the transition matrix for this landscape object
             return TMs[conc]
-        else: return self.TMs[conc]
+        else:
+            return self.TMs[conc]
 
-    def get_TM_phenom(self, phenom=0, conc = -1, store=True):
+    def get_TM_phenom(self, phenom=0, conc=-1, store=True):
         """
         Returns the transition matrix for this landscape, accounting for dosage concentrations.
         Args:
@@ -965,32 +988,35 @@ class Seascape(Landscape):
         # if fitness is higher than current, transition matrix from original index to new index is
 
         if not hasattr(self, 'TM'):
-            mut = range(self.N)                                               # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
-            TM = sparse.csr_matrix((2**self.N,2**self.N))                              # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
+            mut = range(self.N)  # Creates a list (0, 1, ..., N) to call for bitshifting mutations.
+            TM = sparse.csr_matrix((2 ** self.N,
+                                    2 ** self.N))  # Transition matrix will be sparse (most genotypes unaccessible in one step) so initializes a TM with mostly 0s to do most work for us.
 
+            for i in range(2 ** self.N):
+                adjMut = [i ^ (1 << m) for m in
+                          mut]  # For the current genotype i, creates list of genotypes that are 1 mutation away.
 
-            for i in range(2**self.N):
-                adjMut = [i ^ (1 << m) for m in mut]                          # For the current genotype i, creates list of genotypes that are 1 mutation away.
-
-                adjFit = np.array([self.ss[conc, j] for j in adjMut])                         # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+                adjFit = np.array([self.ss[conc, j] for j in
+                                   adjMut])  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
                 fitter = np.nonzero(adjFit - self.ss[conc, i] > 0)[0]
 
                 fitLen = len(fitter)
-                if fitLen == 0:                                               # If no mutations are more fit, stay in current genotype.
-                    TM[i,i] = 1
+                if fitLen == 0:  # If no mutations are more fit, stay in current genotype.
+                    TM[i, i] = 1
                 else:
                     dfit = np.power(adjFit - self.ss[conc, i], phenom)
-                    prob_mut = np.divide(dfit,np.sum(dfit))
+                    prob_mut = np.divide(dfit, np.sum(dfit))
                     count = 0
                     for f in fitter:
-                        TM[adjMut[f],i] = prob_mut[count]
+                        TM[adjMut[f], i] = prob_mut[count]
                         count += 1
-            if store: self.TMs[conc] = TM # store the transition matrix for this landscape object
+            if store: self.TMs[conc] = TM  # store the transition matrix for this landscape object
             return TM
-        else: return self.TMs[conc]
+        else:
+            return self.TMs[conc]
 
-    def get_TM_phenom_inf(self, conc = -1, store=False):
+    def get_TM_phenom_inf(self, conc=-1, store=False):
         """
         Returns the transition matrix for this landscape, with phenomenological stepping (see Tan and Gore 2012). If store=True, it will
         be saved in a field of this object (TM) for later use. If a stored copy already
@@ -1005,7 +1031,8 @@ class Seascape(Landscape):
                 adjMut = [i ^ (1 << m) for m in
                           mut]  # For the current genotype i, creates list of genotypes that are 1 mutation away.
 
-                adjFit = self.ss[adjMut]  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
+                adjFit = self.ss[
+                    adjMut]  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
                 fitter = np.nonzero(adjFit - self.ss[conc, i] > 0)[0]
 
@@ -1021,15 +1048,16 @@ class Seascape(Landscape):
         else:
             return self.TM[conc]
 
-        #TODO probably should rename transition matrix to transition tensor
+        # TODO probably should rename transition matrix to transition tensor
 
-    ###-------------------- EVOLUTION METHODS --------------------###
+    ###-------------------- EVOLUTION METHOD --------------------###
     def evolve(self, steps, curr_conc, p0):
         """
         Returns an array of genotype occupation probabilities after stepping in
         this seascape steps times.
         """
-        T_Tensor = [0 for i in range(len(self.concentrations))]  # Initialize a tensor to hold transition matrices for each concentration
+        T_Tensor = [0 for i in range(
+            len(self.concentrations))]  # Initialize a tensor to hold transition matrices for each concentration
         for conc in range(len(self.concentrations)):
             TM = self.get_TM(conc)
             if p0 is not None:
@@ -1044,47 +1072,6 @@ class Seascape(Landscape):
         T_Tensor = np.array(T_Tensor)
         return T_Tensor[curr_conc]  # Return the occupation probabilities for the specified concentration
 
-    def visualize_genotype_fitness(self):
-        """
-        Visualizes the seascape by plotting the fitness landscape for each concentration.
-        """
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-
-        ax.set_yscale("log")
-        for i, conc in enumerate(self.concentrations):
-            ax.plot(self.ss[i], label=f'Concentration: {conc}')
-        ax.set_xlabel('Genotype Index')
-        ax.set_ylabel('Fitness')
-        ax.set_title(f'Drug {self.drug_label} Landscapes, Varying Concentration')
-        ax.legend(loc = "upper left", bbox_to_anchor = (1,1))
-        plt.show()
-
-    def visualize_concentration_effects(self):
-        """
-        Visualizes the effect of different concentrations on the fitness landscape.
-        """
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-
-
-        ax.set_xscale("log")
-        for i in range(2**self.N):
-            gen = bin(i)[2:].zfill(self.N)
-            ax.plot(self.concentrations, self.ss[:, i], label=f'{gen}')
-        ax.set_xlabel('Concentration')
-        ax.set_ylabel('Fitness')
-        ax.set_title(f'Drug {self.drug_label} Seascape, Hill Equations')
-        ax.legend(loc="upper left", bbox_to_anchor=(1, 1), title = "Genotype", fontsize = "small")
-        plt.tight_layout()
-        plt.show()
-
-    def get_selection_dist(self, selectivity):
-        s_dist = np.random.normal(selectivity, selectivity / 2, self.N)
-        for i in range(len(s_dist)):
-            while not (2 * selectivity >= s_dist[i] >= 0):
-                s_dist[i] = np.random.normal(selectivity, selectivity / 2) #ensure that the random generated number is within bounds
-        return s_dist
 
 class EvoParamGenerator():
     selection_dist = None
@@ -1099,8 +1086,6 @@ class EvoParamGenerator():
         self.fitnesses = self.get_fitness_dist(self.selection_dist, N)
 
         self.resistances = self.get_resistance_dist(N)
-
-
 
     @staticmethod
     def get_selection_dist(selectivity, N):
@@ -1131,14 +1116,40 @@ class EvoParamGenerator():
         return np.array(resistances)
 
 
+class SeascapeUtils:
 
+    @staticmethod
+    def visualize_genotype_fitness(ss: Seascape):
+        """
+        Visualizes the seascape by plotting the fitness landscape for each concentration.
+        """
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
 
+        ax.set_yscale("log")
+        for i, conc in enumerate(ss.concentrations):
+            ax.plot(ss.ss[i], label=f'Concentration: {conc}')
+        ax.set_xlabel('Genotype Index')
+        ax.set_ylabel('Fitness')
+        ax.set_title(f'Drug {ss.drug_label} Landscapes, Varying Concentration')
+        ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
+        plt.show()
 
+    @staticmethod
+    def visualize_concentration_effects(ss: Seascape):
+        """
+        Visualizes the effect of different concentrations on the fitness landscape.
+        """
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
 
-
-
-
-
-
-
-
+        ax.set_xscale("log")
+        for i in range(2 ** ss.N):
+            gen = bin(i)[2:].zfill(ss.N)
+            ax.plot(ss.concentrations, ss.ss[:, i], label=f'{gen}')
+        ax.set_xlabel('Concentration')
+        ax.set_ylabel('Fitness')
+        ax.set_title(f'Drug {ss.drug_label} Seascape, Hill Equations')
+        ax.legend(loc="upper left", bbox_to_anchor=(1, 1), title="Genotype", fontsize="small")
+        plt.tight_layout()
+        plt.show()

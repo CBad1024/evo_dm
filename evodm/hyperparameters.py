@@ -97,7 +97,7 @@ class Presets:
 
     @staticmethod
     def p1_ss() :
-        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=20000)
+        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=2048)
 
     @staticmethod
     def p1_test() :
@@ -105,6 +105,6 @@ class Presets:
 
     @staticmethod
     def p1_ls():
-        return Presets(state_shape = 16, num_actions = 10, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=20000)
+        return Presets(state_shape = 16, num_actions = 10, lr=3e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=2048)
 
 

@@ -182,8 +182,8 @@ class evol_env:
             self.seascapes = [None for i in range(len(self.drugs))]
             for i in range(len(self.drugs)):
 
-                self.seascapes[i] = Seascape(ss=drugs[i], N=self.N,
-                                                sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations)
+                self.seascapes[i] = Seascape(seascape_fitness_data=drugs[i], N=self.N,
+                                             sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations)
 
                 # precompute the transition matrices
                 [self.seascapes[i].get_TM()]#FIXME change to phenom
@@ -724,9 +724,11 @@ def define_mira_landscapes(as_dict=False):
 # more sophisticated in the future.
 
 
-#FIXME change evol_env_wf to inherit from gym.env and then make compatible with tianshou
-
 class WrightFisherEnv(gym.Env):
+    drug_data_set = False
+    seascape_list = None
+    drug_seascapes = None
+
     def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, switch_interval=25, total_generations=1000, seascapes = False, num_drugs = 10):
         super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size
@@ -737,12 +739,13 @@ class WrightFisherEnv(gym.Env):
         self.genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.seq_length)]
         self.seascapes = seascapes
 
-        # Drug data
+        # Drug data (we want it to be same for all trials)
+        cls = WrightFisherEnv
 
-        self.seascape_list = [Seascape(self.seq_length, sigma=0.5, selectivity=0.01, drug_label = i) for i in range(num_drugs)]
-        self.drug_seascapes = np.array([seas.ss for seas in self.seascape_list])  # (drug, conc, genotype)
-
-        #TODO Write this data to separate file and then reuse for testing
+        if not cls.drug_data_set:
+            cls.seascape_list = [Seascape(self.seq_length, sigma=0.5, selectivity=0.05, drug_label = i) for i in range(num_drugs)]
+            cls.drug_seascapes = np.array([seas.ss for seas in self.seascape_list])  # (drug, conc, genotype)
+            cls.drug_data_set = True
 
         self.concentrations = [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005]
 
@@ -751,10 +754,6 @@ class WrightFisherEnv(gym.Env):
             self.num_concs = len(self.seascape_list[0].concentrations)
         else:
             self.num_concs = 1
-
-        # Action space: choosing one of the drugs (and one of the doses if seascapes)
-
-
 
         self.action_space = spaces.Discrete(self.num_drugs*self.num_concs)
 
@@ -801,7 +800,11 @@ class WrightFisherEnv(gym.Env):
         obs = self._get_obs()
         avg_fit = sum((self.pop.get(g, 0) / self.pop_size) * fitness[g] for g in self.genotypes)
 
-        reward = 1-avg_fit
+        if not self.seascapes:
+            reward = np.exp(-4*avg_fit)
+
+        else:
+            reward = 1-avg_fit
 
         if self.seascapes:
             a = self.concentrations[self.current_conc]
@@ -877,10 +880,6 @@ class WrightFisherEnv(gym.Env):
 
         fitnesses = np.dot(state_vector, self.drug_seascapes[self.current_drug, self.current_conc])
         return np.mean(fitnesses)
-
-
-
-
 
 
 class evol_env_wf:

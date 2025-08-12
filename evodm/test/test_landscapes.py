@@ -3,6 +3,7 @@ import pytest
 from evodm.evol_game import define_mira_landscapes
 from evodm.landscapes import *
 from numpy.testing import assert_array_equal
+from evodm.evol_game import WrightFisherEnv
 
 @pytest.fixture
 def ls_N3():
@@ -162,13 +163,13 @@ def test_seascape_visualizer():
     print(ss[0].ss[:, 0])
 
     for s in ss:
-        s.visualize_genotype_fitness()
-        s.visualize_concentration_effects()
+        SeascapeUtils.visualize_genotype_fitness(s)
+        SeascapeUtils.visualize_concentration_effects(s)
 
 
 def test_seascape_selectivity():
     s = Seascape(N=4, sigma=0.5, selectivity=0.05)
-    s.visualize_concentration_effects()
+    SeascapeUtils.visualize_concentration_effects(s)
     print(s.ss)
 
 
@@ -182,3 +183,9 @@ def test_initial_params_set(): #Refactor this abomination of a test case
     assert_array_equal(s1.selection_dist, s2.selection_dist)
     assert_array_equal(s.fitnesses, s1.fitnesses)
     assert_array_equal(s1.fitnesses, s2.fitnesses)
+
+
+def test_spread_of_reward_values():
+    env = WrightFisherEnv()
+    print([seas.ss[0, :] for seas in env.seascape_list])
+    print([1 - 4 * seas.ss[0, :]**2 for seas in env.seascape_list])
