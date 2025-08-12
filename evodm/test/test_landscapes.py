@@ -1,5 +1,9 @@
 import pytest
+
+from evodm.evol_game import define_mira_landscapes
 from evodm.landscapes import *
+from numpy.testing import assert_array_equal
+from evodm.evol_game import WrightFisherEnv
 
 @pytest.fixture
 def ls_N3():
@@ -153,3 +157,35 @@ def test_define_adjMutN5i0jump5(ls_N5):
 
 def test_find_max_indices():
     ls = Landscape(N=4, sigma = 0.5, num_jumps = 1)
+
+def test_seascape_visualizer():
+    ss = [Seascape(N=4, sigma=0.5, ls_max=drug) for drug in define_mira_landscapes()]
+    print(ss[0].ss[:, 0])
+
+    for s in ss:
+        SeascapeUtils.visualize_genotype_fitness(s)
+        SeascapeUtils.visualize_concentration_effects(s)
+
+
+def test_seascape_selectivity():
+    s = Seascape(N=4, sigma=0.5, selectivity=0.05)
+    SeascapeUtils.visualize_concentration_effects(s)
+    print(s.ss)
+
+
+def test_initial_params_set(): #Refactor this abomination of a test case
+    s = Seascape #the class
+    s1 = s(N=4, sigma = 0.5, selectivity=0.05)
+    s2 = s(N=4, sigma = 0.5, selectivity=0.05)
+    assert_array_equal(s.resistances, s1.resistances)
+    assert_array_equal(s1.resistances, s2.resistances)
+    assert_array_equal(s.selection_dist, s1.selection_dist)
+    assert_array_equal(s1.selection_dist, s2.selection_dist)
+    assert_array_equal(s.fitnesses, s1.fitnesses)
+    assert_array_equal(s1.fitnesses, s2.fitnesses)
+
+
+def test_spread_of_reward_values():
+    env = WrightFisherEnv()
+    print([seas.ss[0, :] for seas in env.seascape_list])
+    print([1 - 4 * seas.ss[0, :]**2 for seas in env.seascape_list])

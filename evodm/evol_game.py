@@ -1,10 +1,14 @@
-from .landscapes import Landscape
+from gymnasium import spaces
+from tianshou.env import DummyVectorEnv
+
+from .landscapes import Landscape, Seascape
 import numpy as np
 from tensorflow.keras.utils import to_categorical
 import math
 import random
 import itertools
 import copy
+import gymnasium as gym
 
 
 # Functions to convert data describing bacterial evolution sim into a format
@@ -25,7 +29,7 @@ class evol_env:
                  train_input="state_vector", num_evols=1,
                  random_start=False,
                  num_drugs=4,
-                 num_conc=10,
+                 concentrations=[0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.0],
                  normalize_drugs=True,
                  win_threshold=10,
                  player_wcutoff=0.8,
@@ -38,7 +42,7 @@ class evol_env:
                  starting_genotype=0,
                  dense=False, cs=False,
                  delay=0,
-                 seascapes=False):
+                 seascapes=False, drug_policy=None):
         # define switch for whether to record the state vector or fitness for the learner
         self.TRAIN_INPUT = train_input
         # define environmental variables
@@ -59,7 +63,8 @@ class evol_env:
         self.NOISE_BOOL = add_noise
         self.AVERAGE_OUTCOMES = average_outcomes
         self.SEASCAPES = seascapes
-        self.num_conc = num_conc
+        self.num_conc = len(concentrations)
+        self.concentrations = concentrations
 
         # measurement delay (i.e. are state vector readings delayed by n time steps)
         self.DELAY = delay
@@ -87,6 +92,8 @@ class evol_env:
         self.PLAYER_WCUTOFF = player_wcutoff
         self.POP_WCUTOFF = pop_wcutoff
 
+        self.drug_policy = drug_policy
+
         # define victory threshold
         self.WIN_THRESHOLD = win_threshold  # number of player actions before the game is called
         self.WIN_REWARD = win_reward
@@ -102,7 +109,7 @@ class evol_env:
         self.define_landscapes(drugs=drugs, normalize_drugs=normalize_drugs)
         # define action space and initial action.
         self.define_actions()
-
+        self.action_space_size = len(self.ACTIONS)
         ##initialize state vector
         if self.RANDOM_START:
             self.state_vector = np.ones((2 ** N, 1)) / 2 ** N
@@ -113,7 +120,12 @@ class evol_env:
         self.update_state_mem(state_vector=self.state_vector)
 
         ##Define initial fitness
-        self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]
+        #FIXME Fixed
+        if self.SEASCAPES: #drugs is of form x: drug, y: concentration, z: state
+            self.fitness = [np.dot(self.drugs[self.curr_drug][self.action], self.state_vector)]
+        else:
+            self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]
+
         if self.NOISE_BOOL:
             self.sensor_fitness = self.add_noise(self.fitness)
         else:
@@ -133,16 +145,20 @@ class evol_env:
     def define_actions(self):
         # define the action space - this is a list of integers that the agent can take
         # in the environment in the landscapes case.
-        # In the seascapes case, actions are a tuple of (dose, drug) pairs
+        # In the seascapes case, actions are simply the dosage used
+        #FIXME: THIS IS FIXED
         if self.SEASCAPES:
-            self.actions = [(i, j) for i in self.drugs.keys() for j in range(self.num_conc)]
-            self.action = ('gefitinib', 0)  # first action - value will be updated by the learner
+            print("Seascapes enabled")
+            self.ACTIONS = [i for i in range(self.num_conc)]
+
         else:
             self.ACTIONS = [i for i in range(self.num_drugs)]  # 0-indexed actions
-            self.action = 0  # first action - value will be updated by the learner
-            self.prev_action = 0.0  # pretend this is the second time seeing it why not
-            self.action_history.append(self.action)
 
+        self.action = 0  # first action - value will be updated by the learner
+        self.prev_action = 0
+        if self.SEASCAPES:
+            self.curr_drug = self.drug_policy[0]
+        self.action_history.append(self.action)
     def define_landscapes(self, drugs, normalize_drugs):
         # default behavior is to generate landscapes completely at random.
         # define landscapes #this step is a beast - let's pull this out into it's own function
@@ -159,18 +175,18 @@ class evol_env:
             self.drugs = drugs
         # Normalize landscapes if directed
         if normalize_drugs:
-            self.drugs = normalize_landscapes(self.drugs,
-                                              seascapes=self.SEASCAPES)
+            self.drugs = normalize_landscapes(self.drugs)
+        #FIXME no changes needed here (seascapes only accessed during second part of training)
         if self.SEASCAPES:
-            # In this case, their are two variables that define a landscape (dose, drug) instead of just drug
-            self.landscapes = {}
-            for i in drugs.keys():
-                self.landscapes[i] = [Landscape(ls=drugs[i][j], N=self.N,
-                                                sigma=self.sigma, dense=self.DENSE)
-                                      for j in drugs[i]]
+            # In this case, access a seascapes object by drug name
+            self.seascapes = [None for i in range(len(self.drugs))]
+            for i in range(len(self.drugs)):
+
+                self.seascapes[i] = Seascape(seascape_fitness_data=drugs[i], N=self.N,
+                                             sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations)
+
                 # precompute the transition matrices
-                self.landscapes[i] = [self.landscapes[i][j].get_TM_phenom(phenom=self.PHENOM)
-                                      for j in range(len(self.landscapes[i]))]
+                [self.seascapes[i].get_TM()]#FIXME change to phenom
 
         else:
             self.landscapes = [Landscape(ls=i, N=self.N, sigma=self.sigma,
@@ -179,7 +195,7 @@ class evol_env:
             #    [i.get_TM_phenom(phenom = self.PHENOM) for i in self.landscapes]
             # else:
             #    [i.get_TM() for i in self.landscapes] #pre-compute TM
-            [i.get_TM_phenom(phenom=self.PHENOM) for i in self.landscapes]
+            [i.get_TM() for i in self.landscapes]
 
         return
 
@@ -191,12 +207,22 @@ class evol_env:
         self.action_number += 1
         self.update_target_counter += 1
 
+        #TODO : change to implement a single learner to learn drug cycling and second to learn dosing strategy
+        # under seascapes the action should first be just the drug and for the second learner it should be the dose
+
         # Run the sim under the assigned conditions
         if self.action not in self.ACTIONS:  # Check if action is valid
             raise ValueError(f"Invalid action {self.action}. Must be one of {self.ACTIONS}")
-        fitness, state_vector = run_sim(evol_steps=self.NUM_EVOLS,
+        #TODO Change here
+        if self.SEASCAPES:
+            fitness, state_vector = run_sim_ss(evol_steps=self.NUM_EVOLS,
+                                            state_vector=self.state_vector,
+                                            ss=self.seascapes[self.curr_drug], #FIXME we need to access the seascapes[curr_drug]
+                                            average_outcomes=self.AVERAGE_OUTCOMES, conc = self.action)#action is the concentration
+        else:
+            fitness, state_vector = run_sim(evol_steps=self.NUM_EVOLS,
                                         state_vector=self.state_vector,
-                                        ls=self.landscapes[self.action],  # Use 0-indexed action
+                                        ls=self.landscapes[self.action],  #action is the drug
                                         average_outcomes=self.AVERAGE_OUTCOMES)
 
         self.update_state_mem(state_vector=state_vector)
@@ -218,8 +244,14 @@ class evol_env:
         # update the current state vector
         self.state_vector = state_vector
         # update action-1 - its assumed that self.action is updated prior to initiating env.step
-        self.prev_action = float(self.action)  # type conversion
+        #TODO change here
+        if self.SEASCAPES:
+            self.prev_action = self.action
+        else:
+            self.prev_action = float(self.action)  # type conversion
         self.action_history.append(self.action)
+        if self.SEASCAPES:
+            self.curr_drug = self.drug_policy[np.argmax(self.state_vector)]  #takes the current drug as the one with the optimal drug policy in the given state
         # done
         return
 
@@ -318,7 +350,7 @@ class evol_env:
 
         return np.mean(fitnesses)
 
-    def calc_reward(self, fitness, total_resistance=False):
+    def calc_reward(self, fitness, total_resistance=False, seascapes=False):
         # okay so if fitness is low - this number will be higher
         # "winning" the game is associated with a huge reward while losing a huge penalty
 
@@ -332,8 +364,11 @@ class evol_env:
             else:
                 # CHANGE: reward is negative of fitness
                 #np.exp(1 - fit) - 1
-                diversity_bonus = compute_diversity_bonus(self.action_history)
-                reward = 2*(np.exp(1 - fitness) - 0.5) - diversity_bonus
+                diversity_bonus = self.compute_diversity_bonus(self.action_history)
+
+                reward = -fitness - diversity_bonus
+                if seascapes:
+                    reward += - 0.05 *np.log10(self.concentrations[self.action]) #penalize for high concentrations
         else:
             if self.pop_wcount >= self.WIN_THRESHOLD:
                 reward = -self.WIN_REWARD
@@ -343,7 +378,9 @@ class evol_env:
                 self.DONE = True
             else:
                 diversity_bonus = self.compute_diversity_bonus(self.action_history)
-                reward = -1 if np.mean(fitness) > 0.8 else (np.exp(1 - fitness) - 0.5) - diversity_bonus
+                reward = -1 if np.mean(fitness) > 0.8 else -fitness - diversity_bonus
+                if seascapes:
+                    reward += -0.05*np.log10(self.concentrations[self.action]) #penalize for high concentrations
 
         return reward
 
@@ -414,14 +451,19 @@ class evol_env:
         self.episode_number += 1
 
         # re-initialize the action number
-        self.action = 0  # Use 0-indexed action
+        #FIXME: changed
+        self.action = 0
 
         # re-initialize victory conditions
         self.pop_wcount = 0
         self.player_wcount = 0
         self.done = False
         # re-calculate fitness with the new state_vector
-        self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]  # Use 0-indexed action
+        #TODO Change here
+        if self.SEASCAPES: # if seascapes, we need to access drugs[curr_drug][curr_conc] where curr_conc = action
+            self.fitness = [np.dot(self.drugs[self.curr_drug][self.action], self.state_vector)] #FIXME changed for now but need to implement curr_drug
+        else:
+            self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]  # Use 0-indexed action
         if self.NOISE_BOOL:
             self.fitness = self.add_noise(self.fitness)
         self.sensor = []
@@ -470,10 +512,12 @@ def generate_landscapes2(N=4, sigma=0.5, num_drugs=4, CS=False, dense=False, cor
     return landscapes, drugs
 
 
+#FIXME Fixed
 def normalize_landscapes(drugs, seascapes=False):
-    if seascapes:
-        for i in drugs.keys():
-            for j in drugs[i].keys():
+
+    if seascapes: #if seascapes, drugs
+        for i in range(len(drugs)): #num drugs
+            for j in range(len(drugs[i])): #num concentrations
                 drugs[i][j] = drugs[i][j] - np.min(drugs[i][j])
                 drugs[i][j] = drugs[i][j] / np.max(drugs[i][j])
         drugs_normalized = drugs
@@ -496,12 +540,48 @@ def discretize_state(state_vector):
     converting the returned average outcomes to a single population trajectory.
     '''
     S = [i for i in range(len(state_vector))]
-    probs = state_vector.reshape(len(state_vector))
+    probs = state_vector.T.flatten()
     # choose one state - using the relative frequencies of the other states as the probabilities of being selected
     state = np.random.choice(S, size=1, p=probs)  # pick a state for the whole p
     new_states = np.zeros((len(state_vector), 1))
     new_states[state] = 1
     return new_states
+
+def run_sim_ss(evol_steps, ss, state_vector, average_outcomes=False, conc = 0, wf = False):
+    '''
+    Function to progress evolutionary simulation forward n times steps in a given fitness regime defined by action under
+    a seascape
+
+    Args
+        evol_steps: int
+            number of steps
+        state_vector: array
+            N**2 length array defining the position of the population in genotype space
+        average_outcomes bool
+            should all possible futures be averaged into the state vector or should
+            we simulate a single evolutionary trajectory? defaults to False
+    Returns: fitness, state_vector
+        fitness:
+            population fitness in chosen drug regime
+    '''
+    reward = []
+    # Evolve for 100 steps.
+    for i in range(evol_steps):
+        # This is the fitness of the population when the drug is selected to be used.
+        if not average_outcomes:
+            if wf:
+                state_vector = discretize_state(state_vector)
+
+        reward.append(np.dot(ss.ss[conc], state_vector))
+
+        # Performs a single evolution step - TM should be stored in the landscape object
+        state_vector = ss.evolve(1, curr_conc = conc, p0=state_vector)
+
+    if not average_outcomes and wf:#FIXME change this back to being even if phenom is the case
+        state_vector = discretize_state(state_vector)  # discretize again before sending it back
+
+    reward = np.squeeze(reward)
+    return reward, state_vector
 
 
 def run_sim(evol_steps, ls, state_vector, average_outcomes=False):
@@ -643,6 +723,165 @@ def define_mira_landscapes(as_dict=False):
 # Could have defined this in-line but made it a separate function in case we want to make it
 # more sophisticated in the future.
 
+
+class WrightFisherEnv(gym.Env):
+    drug_data_set = False
+    seascape_list = None
+    drug_seascapes = None
+
+    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, switch_interval=25, total_generations=1000, seascapes = False, num_drugs = 10):
+        super(WrightFisherEnv, self).__init__()
+        self.pop_size = pop_size
+        self.seq_length = seq_length
+        self.mutation_rate = mutation_rate
+        self.switch_interval = switch_interval
+        self.total_generations = total_generations
+        self.genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.seq_length)]
+        self.seascapes = seascapes
+
+        # Drug data (we want it to be same for all trials)
+        cls = WrightFisherEnv
+
+        if not cls.drug_data_set:
+            cls.seascape_list = [Seascape(self.seq_length, sigma=0.5, selectivity=0.05, drug_label = i) for i in range(num_drugs)]
+            cls.drug_seascapes = np.array([seas.ss for seas in self.seascape_list])  # (drug, conc, genotype)
+            cls.drug_data_set = True
+
+        self.concentrations = [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005]
+
+        self.num_drugs = num_drugs
+        if seascapes:
+            self.num_concs = len(self.seascape_list[0].concentrations)
+        else:
+            self.num_concs = 1
+
+        self.action_space = spaces.Discrete(self.num_drugs*self.num_concs)
+
+
+        # Observation space: genotype frequencies
+        self.observation_space = spaces.Box(low=0, high=1, shape=(len(self.genotypes),), dtype=np.float32)
+
+        # State initialization
+        self.pop = {}
+        self.current_drug = 0
+        self.current_conc = 0
+        self.generation = 0
+        self.reset()
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self.pop = {'0' * self.seq_length: self.pop_size}
+        self.generation = 0
+        self.current_drug = 0
+        self.current_conc = 2 #we always rest the concentration to a medium value
+        obs = self._get_obs()
+        return obs, {}
+
+
+    def step(self, action):
+        if not self.seascapes:
+            self.current_drug = action
+            self.current_conc = 2
+        else:
+            self.current_drug = action % 10 #ones digit
+            self.current_conc = int(action/10) #tens digit
+
+        if self.current_drug >= 10 or self.current_conc >= 8:
+           raise ValueError("Current Drug: ", self.current_drug, "\nCurrent Conc: ", self.current_conc)
+
+        fitness = {geno: self.drug_seascapes[self.current_drug, self.current_conc, i] for i, geno in enumerate(self.genotypes)}
+
+        for _ in range(self.switch_interval):
+            self.time_step(fitness)
+            self.generation += 1
+            if self.generation >= self.total_generations:
+                break
+
+        obs = self._get_obs()
+        avg_fit = sum((self.pop.get(g, 0) / self.pop_size) * fitness[g] for g in self.genotypes)
+
+        if not self.seascapes:
+            reward = np.exp(-4*avg_fit)
+
+        else:
+            reward = 1-avg_fit
+
+        if self.seascapes:
+            a = self.concentrations[self.current_conc]
+            if a <= 0:
+                print(a)
+            reward -= 0.06*np.log10(self.concentrations[self.current_conc])
+
+        terminated = self.generation >= self.total_generations
+        truncated = False  # Gymnasium requires this explicitly
+        info = {'avg_fitness': avg_fit}
+
+        return obs, reward, terminated, truncated, info
+
+
+    def _get_obs(self):
+        freqs = np.array([self.pop.get(geno, 0) for geno in self.genotypes]) / self.pop_size
+        return freqs.astype(np.float32)
+
+    def get_obs(self):
+        return self._get_obs()
+
+    def time_step(self, fitness):
+        self.mutation_step()
+        self.offspring_step(fitness)
+
+    def mutation_step(self):
+        mutation_count = np.random.poisson(self.mutation_rate * self.pop_size * self.seq_length)
+        for _ in range(mutation_count):
+            haplotype = self.get_random_haplotype()
+            if self.pop[haplotype] > 1:
+                self.pop[haplotype] -= 1
+                mutant = self.get_mutant(haplotype)
+                self.pop[mutant] = self.pop.get(mutant, 0) + 1
+
+    def get_random_haplotype(self):
+        haplotypes, frequencies = zip(*self.pop.items())
+        frequencies = np.array(frequencies) / self.pop_size
+        return np.random.choice(haplotypes, p=frequencies)
+
+    def get_mutant(self, haplotype):
+        site = np.random.randint(0, self.seq_length)
+        new_base = '1' if haplotype[site] == '0' else '0'
+        return haplotype[:site] + new_base + haplotype[site + 1:]
+
+    def offspring_step(self, fitness):
+        haplotypes = list(self.pop.keys())
+        frequencies = [self.pop[h] / self.pop_size for h in haplotypes]
+        fit_values = [fitness[h] for h in haplotypes]
+        weights = np.array(frequencies) * np.array(fit_values)
+        weights /= weights.sum()
+
+        counts = np.random.multinomial(self.pop_size, weights)
+        self.pop.clear()
+        for haplotype, count in zip(haplotypes, counts):
+            if count > 0:
+                self.pop[haplotype] = count
+
+    @classmethod
+    def getEnv(cls, n_train, n_test, seascapes = False):
+        def make_env():
+            return WrightFisherEnv(seascapes=seascapes)
+        train_envs = DummyVectorEnv([make_env for _ in range(n_train)])
+        test_envs = DummyVectorEnv([make_env for _ in range(n_test)])
+        return train_envs, test_envs
+
+    def get_fitness(self):
+        frequencies = np.array(list(self.pop.values())) / self.pop_size
+        haplotypes = list(self.pop.keys())
+        state_vector = np.zeros(2**self.seq_length)
+        hap_inds = [int(hap, 2) for hap in haplotypes]
+        for i, hap in enumerate(hap_inds):
+            state_vector[hap] = frequencies[i]
+
+        fitnesses = np.dot(state_vector, self.drug_seascapes[self.current_drug, self.current_conc])
+        return np.mean(fitnesses)
+
+
 class evol_env_wf:
     def __init__(self, N=4, num_drugs=15, train_input='state_vector', pop_size=10000,
                  gen_per_step=2, mutation_rate=1e-6, hgt_rate=1e-5,
@@ -703,6 +942,7 @@ class evol_env_wf:
                         range(self.NUM_DRUGS)]  # action space -no plus one because it was really really dumb
 
         self.done = False
+        self.pop_counts = []
 
     def update_sensor(self, pop):
         # this is creating a stacked data structure where each time point provides
@@ -761,6 +1001,7 @@ class evol_env_wf:
         self.prev_action = float(self.action)
         self.state_vector = self.convert_state_vector(sv=self.pop)
         self.fitness = self.compute_pop_fitness(drug=self.drug, sv=self.pop)
+        self.pop_counts.append(self.pop.copy())
 
     # reset the environment after an 'episode'
     def reset(self):
@@ -778,10 +1019,11 @@ class evol_env_wf:
         self.drug = self.drugs[self.action]
         self.state_vector = self.convert_state_vector(sv=self.pop)
         self.fitness = self.compute_pop_fitness(drug=self.drug, sv=self.pop)
+        self.pop_counts = []
 
     def time_step(self):
         self.mutation_step()
-        self.hgt_event()
+        # self.hgt_event()
         self.offspring_step()
 
     def mutation_step(self):
@@ -918,3 +1160,24 @@ class evol_env_wf:
             H += (allele_proportion * math.log(allele_proportion))
 
         return -H
+
+    def visualize_pop_counts(self):
+        """
+        Function to display the counts of each genotype in the population.
+        """
+        import matplotlib.pyplot as plt
+
+        haplotypes = list(self.pop.keys())
+
+
+
+        fig, ax = plt.subplots()
+        x = np.arange(len(self.pop_counts))
+        for haplotype in haplotypes:
+            ax.plot(x,[self.pop_counts[i][haplotype] for i in range(len(self.pop_counts))], label=haplotype)
+        plt.xlabel('Time Steps')
+        plt.ylabel('Counts')
+        plt.title('Population Counts of Each Haplotype')
+        plt.tight_layout()
+        plt.legend()
+        plt.show()

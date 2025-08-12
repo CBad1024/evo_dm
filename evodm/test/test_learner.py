@@ -1,4 +1,5 @@
-from evodm.learner import compute_optimal_policy, compute_optimal_action, DrugSelector, practice, hyperparameters
+from evodm.learner import compute_optimal_policy, compute_optimal_action, DrugSelector, practice
+from evodm.hyperparameters import hyperparameters
 from evodm.dpsolve import backwards_induction, dp_env
 from evodm.exp import define_mira_landscapes
 import random
@@ -629,3 +630,17 @@ def test_memory_wf4(hp_wf):
         agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS), np.max(agent.env.ACTIONS)))
         agent.env.step()
         agent.update_replay_memory()
+
+
+def test_seascape_training():
+    hp = hyperparameters()
+    hp.SEASCAPES = True
+    hp.MIN_REPLAY_MEMORY_SIZE = 200
+    hp.EPISODES = 60
+    hp.drug_policy = [10, 10, 10, 10, 10, 10, 10, 10, 10,  3, 13, 13,  3 , 3 ,13, 13]
+    agent_ss = DrugSelector(hp=hp, drugs=define_mira_landscapes())
+    rewards_ss, agent_ss, dosage_policy_raw, V_ss = practice(agent_ss, naive=False, wf=False, train_freq=1, compute_implied_policy_bool=True)
+    dosage_policy = [int(np.argmax(i)) for i in dosage_policy_raw]
+    combined_policy = [(hp.drug_policy[i], dosage_policy[i]) for i in range(len(dosage_policy))]
+    print("Q table: ", agent_ss.q_table())
+    print("Learned Policy: ", combined_policy)

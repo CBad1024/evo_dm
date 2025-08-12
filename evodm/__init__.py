@@ -1,4 +1,5 @@
-from .learner import hyperparameters, DrugSelector, practice
+from .learner import DrugSelector, practice
+from .hyperparameters import hyperparameters
 from .landscapes import Landscape
 from .evol_game import evol_env, generate_landscapes, normalize_landscapes, run_sim, define_mira_landscapes
 from .exp import evol_deepmind, mdp_mira_sweep, policy_sweep, test_generic_policy, sweep_replicate_policy, mdp_sweep, signal2noise

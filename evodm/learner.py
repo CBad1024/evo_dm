@@ -1,53 +1,24 @@
 # this file will define the learner class, along with required methods -
 # we are taking inspiration (and in some cases borrowing heavily) from the following
 # tutorial: https://pythonprogramming.net/training-deep-q-learning-dqn-reinforcement-learning-python-tutorial/?completed=/deep-q-learning-dqn-reinforcement-learning-python-tutorial/
-import tensorflow as tf
-import keras
-from keras.models import Sequential, Model
+
+import random
+from collections import deque
+from copy import deepcopy
+
+import numpy as np
 from keras.layers import Dense, Dropout, Conv1D, MaxPooling1D, Flatten
+from keras.models import Sequential, Model
 from keras.optimizers import Adam
-from keras.layers import deserialize, serialize
-from tensorflow.python.keras.saving import saving_utils
 from keras.regularizers import L2
 from keras.utils import to_categorical
-from collections import deque
-from evodm.evol_game import evol_env, evol_env_wf
-from evodm.dpsolve import backwards_induction, dp_env
-import random
-import numpy as np 
-from copy import deepcopy
 from tqdm import tqdm
 
-# Function to set hyperparameters for the learner - just edit this any time you
-# want to screw around with them.
-#or edit directly
+from evodm.dpsolve import backwards_induction, dp_env
+from evodm.evol_game import evol_env, evol_env_wf, define_mira_landscapes
+from evodm.landscapes import Seascape
+import pandas as pd
 
-# def unpack(model, training_config, weights):
-#     restored_model = deserialize(model)
-#     if training_config is not None:
-#         restored_model.compile(
-#             **saving_utils.compile_args_from_training_config(
-#                 training_config
-#             )
-#         )
-#     restored_model.set_weights(weights)
-#     return restored_model
-#
-# # Hotfix function
-# def make_keras_picklable():
-#
-#     def __reduce__(self):
-#         # model_config = self.get_config()
-#         # weights = self.get_weights()
-#
-#         model_metadata = saving_utils.model_metadata(self)
-#         training_config = model_metadata.get("training_config", None)
-#         model = serialize(self)
-#         weights = self.get_weights()
-#         return (unpack, (model, training_config, weights))
-#
-#     cls = Model
-#     cls.__reduce__ = __reduce__
 
 def unpack(model_config, weights, compile_config=None):
     from tensorflow.keras.models import Model
@@ -84,76 +55,15 @@ def make_keras_picklable():
     cls = Model
     cls.__reduce__ = __reduce__
 
+
 # Run the function
 make_keras_picklable()
 
-class hyperparameters:
-    '''
-    class to store the hyperparemeters that control evoDM
-    ...
-    Args
-    ------
-    self: class hyperparameters
-    
-    Returns class hyperparameters
-    '''
 
-    def __init__(self):
-        # Model training settings
-        self.REPLAY_MEMORY_SIZE = 10000
-        self.MASTER_MEMORY = True
-        self.MIN_REPLAY_MEMORY_SIZE = 1000 #TODO Change this to 1000 for real training
-        self.MINIBATCH_SIZE = 100  
-        self.UPDATE_TARGET_EVERY = 310 #every 500 steps, update the target
-        self.TRAIN_INPUT = "state_vector"
-        self.DELAY = 0
-        
-        # Exploration settings
-        self.DISCOUNT = 0.99  
-        self.epsilon = 1  # lowercase because its not a constant
-        self.EPSILON_DECAY = 0.95
-        self.MIN_EPSILON = 0.001
-        self.LEARNING_RATE = 0.0001
-
-        # settings control the evolutionary simulation
-        self.NUM_EVOLS = 1 # how many evolutionary steps per time step
-        self.SIGMA = 0.5
-        self.NORMALIZE_DRUGS = True # should fitness values for all landscapes be bound between 0 and 1?
-        self.AVERAGE_OUTCOMES = False #should we use the average of infinite evolutionary sims or use a single trajectory?
-        self.DENSE = False #will transition matrix be stored in dense or sparse format?
-        # new evolutionary "game" every n steps or n *num_evols total evolutionary movements
-        self.RESET_EVERY = 20
-        self.EPISODES = 500
-        self.N = 5
-        self.RANDOM_START = False
-        self.STARTING_GENOTYPE = 0 #default to starting at the wild type genotype
-        self.NOISE = False #should the sensor readings be noisy?
-        self.NOISE_MODIFIER = 1  #enable us to increase or decrease the amount of noise in the system
-        self.NUM_DRUGS = 4
-        self.MIRA = True
-        self.TOTAL_RESISTANCE = False
-        self.PHENOM = 0
-        #wright-fisher controls
-        self.WF = False
-        self.POP_SIZE = 10000
-        self.GEN_PER_STEP = 1
-        self.MUTATION_RATE = 1e-5
-
-        #define victory conditions for player and pop
-        self.PLAYER_WCUTOFF = 0.001
-        self.POP_WCUTOFF = 0.999
-
-        #define victory threshold
-        self.WIN_THRESHOLD = 1000 # number of player actions before the game is called
-        self.WIN_REWARD = 0
-
-        # stats settings - 
-        self.AGGREGATE_STATS_EVERY = 1  #agg every episode
-
-# This is the class for the learning agent
+# This is the class for the learning agent used for TensorFlow
 class DrugSelector:
-    
-    def __init__(self, hp, drugs= None):
+
+    def __init__(self, hp, drugs=None):
         '''
         Initialize the DrugSelector class
         ...
@@ -173,31 +83,35 @@ class DrugSelector:
         # hp stands for hyperparameters
         self.hp = hp
         if self.hp.WF:
-            self.env = evol_env_wf(train_input = self.hp.TRAIN_INPUT,
-                                   pop_size = self.hp.POP_SIZE, 
-                                   gen_per_step = self.hp.GEN_PER_STEP, 
-                                   mutation_rate = self.hp.MUTATION_RATE)
+            self.env = evol_env_wf(train_input=self.hp.TRAIN_INPUT,
+                                   pop_size=self.hp.POP_SIZE,
+                                   gen_per_step=self.hp.GEN_PER_STEP,
+                                   mutation_rate=self.hp.MUTATION_RATE)
         else:
             # initialize the environment
-            self.env = evol_env(num_evols=self.hp.NUM_EVOLS, N = self.hp.N,
-                                train_input= self.hp.TRAIN_INPUT, 
-                                random_start=self.hp.RANDOM_START, 
-                                num_drugs = self.hp.NUM_DRUGS, 
+            if self.hp.SEASCAPES:
+                self.drugs = self.make_drugs_seascapes(drugs)
+            else:
+                self.drugs = drugs
+            self.env = evol_env(num_evols=self.hp.NUM_EVOLS, N=self.hp.N,
+                                train_input=self.hp.TRAIN_INPUT,
+                                random_start=self.hp.RANDOM_START,
+                                num_drugs=self.hp.NUM_DRUGS,
                                 sigma=self.hp.SIGMA,
-                                normalize_drugs = self.hp.NORMALIZE_DRUGS, 
-                                win_threshold= self.hp.WIN_THRESHOLD, 
-                                player_wcutoff = self.hp.PLAYER_WCUTOFF, 
-                                pop_wcutoff= self.hp.POP_WCUTOFF,
-                                win_reward=self.hp.WIN_REWARD, 
-                                drugs = drugs, 
-                                add_noise = self.hp.NOISE, 
-                                noise_modifier= self.hp.NOISE_MODIFIER,
-                                average_outcomes=self.hp.AVERAGE_OUTCOMES, 
-                                starting_genotype = self.hp.STARTING_GENOTYPE,
-                                total_resistance= self.hp.TOTAL_RESISTANCE,
+                                normalize_drugs=self.hp.NORMALIZE_DRUGS,
+                                win_threshold=self.hp.WIN_THRESHOLD,
+                                player_wcutoff=self.hp.PLAYER_WCUTOFF,
+                                pop_wcutoff=self.hp.POP_WCUTOFF,
+                                win_reward=self.hp.WIN_REWARD,
+                                drugs=self.drugs,
+                                add_noise=self.hp.NOISE,
+                                noise_modifier=self.hp.NOISE_MODIFIER,
+                                average_outcomes=self.hp.AVERAGE_OUTCOMES,
+                                starting_genotype=self.hp.STARTING_GENOTYPE,
+                                total_resistance=self.hp.TOTAL_RESISTANCE,
                                 dense=self.hp.DENSE,
-                                delay=self.hp.DELAY, 
-                                phenom=self.hp.PHENOM)
+                                delay=self.hp.DELAY,
+                                phenom=self.hp.PHENOM, seascapes=hp.SEASCAPES, drug_policy=hp.drug_policy)
 
         # main model  # gets trained every step
         self.model = self.create_model()
@@ -211,49 +125,67 @@ class DrugSelector:
         self.target_update_counter = 0
         self.policies = []
 
+    def make_drugs_seascapes(self, drugs):
+        """
+        Function to extend drugs into seascapes format
+        Args:
+            drugs: 2D array of drugs, each row is a drug, each column is a state, each value is a fitness value
+
+        Returns: array of drugs in seascapes format, which is a 3D tensor. First axis gives drug, and each element of that first axis is the 2D array of fitness values for that drug at different concentrations across all states.
+
+        """
+        seascapes = np.array(
+            [Seascape(N=self.hp.N, sigma=self.hp.SIGMA, ls_max=drugs[i]).ss for i in range(len(drugs))])
+        return seascapes
+
     def create_model(self):
 
         model = Sequential()
-        #need to change padding settings if using fitness to train model
-        #because sequence may not be long enough
+        # need to change padding settings if using fitness to train model
+        # because sequence may not be long enough
         if self.hp.TRAIN_INPUT == "state_vector":
             model.add(Conv1D(64, 3, activation="relu",
-                         input_shape=self.env.ENVIRONMENT_SHAPE, kernel_regularizer = L2(0.01)))
-            model.add(Conv1D(64, 3, activation="relu", kernel_regularizer = L2(0.01)))
+                             input_shape=self.env.ENVIRONMENT_SHAPE, kernel_regularizer=L2(0.01)))
+            model.add(Conv1D(64, 3, activation="relu", kernel_regularizer=L2(0.01)))
             model.add(MaxPooling1D(pool_size=2))
             model.add(Flatten())
         elif self.hp.TRAIN_INPUT == "fitness":
-            #have to change the kernel size because of the weird difference in environment shape
+            # have to change the kernel size because of the weird difference in environment shape
             model.add(Dense(64, activation="relu",
-                         input_shape=self.env.ENVIRONMENT_SHAPE))
+                            input_shape=self.env.ENVIRONMENT_SHAPE))
         elif self.hp.TRAIN_INPUT == "pop_size":
             model.add(Conv1D(64, 3, activation="relu",
-                         input_shape=self.env.ENVIRONMENT_SHAPE))
+                             input_shape=self.env.ENVIRONMENT_SHAPE))
             model.add(Conv1D(64, 3, activation="relu"))
             model.add(MaxPooling1D(pool_size=2))
             model.add(Flatten())
         else:
-            print("please specify either state_vector, fitness, or pop_size for train_input when initializing the environment")
+            print(
+                "please specify either state_vector, fitness, or pop_size for train_input when initializing the environment")
             return
         model.add(Dropout(0.2))
-        model.add(Dense(28, activation = "relu"))
+        model.add(Dense(28, activation="relu"))
         model.add(Dense(len(self.env.ACTIONS), activation="linear"))
         model.compile(loss="mse", optimizer=Adam(learning_rate=self.hp.LEARNING_RATE), metrics=['accuracy'])
         return model
 
     def update_replay_memory(self):
-        
+
         if self.env.action_number > 1 + self.hp.DELAY:
             self.replay_memory.append(self.env.sensor)
-            #update master memory - for diagnostic purposes only
+            # update master memory - for diagnostic purposes only
             if self.hp.MASTER_MEMORY:
                 if self.env.TRAIN_INPUT == "fitness":
-                    #want to save the state vector history somewhere, regardless of what we use for training. 
-                    self.master_memory.append([self.env.episode_number, self.env.action_number, self.env.sensor, self.env.state_vector, self.env.fitness])
+                    # want to save the state vector history somewhere, regardless of what we use for training.
+                    self.master_memory.append(
+                        [self.env.episode_number, self.env.action_number, self.env.sensor, self.env.state_vector,
+                         self.env.fitness])
                 else:
-                    self.master_memory.append([self.env.episode_number, self.env.action_number, self.env.sensor, self.env.fitness]) #also record real fitness instead of sensor fitness
+                    self.master_memory.append([self.env.episode_number, self.env.action_number, self.env.sensor,
+                                               self.env.fitness])  # also record real fitness instead of sensor fitness
         # Trains main network every step during episode
-      #gonna chunk this out so I can actually test it
+
+    # gonna chunk this out so I can actually test it
 
     # def soft_update_target_model(self, tau=0.01):
     #     '''
@@ -279,7 +211,6 @@ class DrugSelector:
     #     # Set new weights to target model
     #     self.target_model.set_weights(new_weights)
 
-
     def train(self):
 
         # Start training only if certain number of samples is already saved
@@ -289,19 +220,18 @@ class DrugSelector:
         # Get a minibatch of random samples from memory replay table
         minibatch = random.sample(self.replay_memory, self.hp.MINIBATCH_SIZE)
 
-        #get the current states
-        current_states, new_current_states = self.get_current_states(minibatch = minibatch)
+        # get the current states
+        current_states, new_current_states = self.get_current_states(minibatch=minibatch)
 
-        current_qs_list = self.model.predict(current_states, verbose = 0)
-        future_qs_list = self.target_model.predict(new_current_states, verbose = 0)
+        current_qs_list = self.model.predict(current_states, verbose=0)
+        future_qs_list = self.target_model.predict(new_current_states, verbose=0)
 
-        
         # Now we need to enumerate our batches
-        X,y = self.enumerate_batch(minibatch = minibatch, future_qs_list = future_qs_list, 
-                                   current_qs_list = current_qs_list)
-                                   
+        X, y = self.enumerate_batch(minibatch=minibatch, future_qs_list=future_qs_list,
+                                    current_qs_list=current_qs_list)
+
         history = self.model.fit(X, y, batch_size=self.hp.MINIBATCH_SIZE,
-                       verbose=0, shuffle=False, callbacks=None)
+                                 verbose=0, shuffle=False, callbacks=None)
 
         # If counter reaches set value, update target network with weights of main network
         # ADD TARGET NETWORK STABILIZATION
@@ -311,13 +241,11 @@ class DrugSelector:
             self.env.update_target_counter = 0
         return history.history['loss'][0]
 
-    #function to enumerate batch and generate X/y for training
+    # function to enumerate batch and generate X/y for training
     def enumerate_batch(self, minibatch, future_qs_list, current_qs_list):
         X = []
         y = []
-
         for index, (current_state, action, reward, new_current_state) in enumerate(minibatch):
-
             # If not a terminal state, get new q from future states, otherwise set it to 0
             # almost like with Q Learning, but we use just part of equation here
             max_future_q = np.max(future_qs_list[index])
@@ -325,23 +253,24 @@ class DrugSelector:
 
             # Update Q value for given state
             current_qs = current_qs_list[index]
-            current_qs[action] = new_q #again we need the minus 1 because of the dumb python indexing system
+
+            current_qs[action] = new_q
 
             # And append to our training data
             X.append(current_state)
             y.append(current_qs)
 
         # Fit on all samples as one batch, log only on terminal state
-        #need to reshape x to match dimensions
+        # need to reshape x to match dimensions
         if self.env.TRAIN_INPUT == "state_vector":
-            X = np.array(X).reshape(self.hp.MINIBATCH_SIZE, self.env.ENVIRONMENT_SHAPE[0], 
+            X = np.array(X).reshape(self.hp.MINIBATCH_SIZE, self.env.ENVIRONMENT_SHAPE[0],
                                     self.env.ENVIRONMENT_SHAPE[1])
-        else: 
+        else:
             X = np.array(X).reshape(self.hp.MINIBATCH_SIZE, self.env.ENVIRONMENT_SHAPE[0])
         y = np.array(y)
 
-        return X,y
-        
+        return X, y
+
     def get_current_states(self, minibatch):
         # Get current states from minibatch, then query NN model for Q values
         current_states = np.array([transition[0] for transition in minibatch])
@@ -350,19 +279,19 @@ class DrugSelector:
         new_current_states = np.array(
             [transition[3] for transition in minibatch])
 
-        #reshape to match expected input dimensions
+        # reshape to match expected input dimensions
         if self.env.TRAIN_INPUT == "state_vector":
-            current_states = current_states.reshape(self.hp.MINIBATCH_SIZE, 
+            current_states = current_states.reshape(self.hp.MINIBATCH_SIZE,
                                                     self.env.ENVIRONMENT_SHAPE[0],
                                                     self.env.ENVIRONMENT_SHAPE[1])
 
-            new_current_states = new_current_states.reshape(self.hp.MINIBATCH_SIZE, 
+            new_current_states = new_current_states.reshape(self.hp.MINIBATCH_SIZE,
                                                             self.env.ENVIRONMENT_SHAPE[0],
-                                                            self.env.ENVIRONMENT_SHAPE[1])               
+                                                            self.env.ENVIRONMENT_SHAPE[1])
         else:
-            current_states.reshape(self.hp.MINIBATCH_SIZE, 
-                                   self.env.ENVIRONMENT_SHAPE[0])                                                  
-            new_current_states = new_current_states.reshape(self.hp.MINIBATCH_SIZE, 
+            current_states.reshape(self.hp.MINIBATCH_SIZE,
+                                   self.env.ENVIRONMENT_SHAPE[0])
+            new_current_states = new_current_states.reshape(self.hp.MINIBATCH_SIZE,
                                                             self.env.ENVIRONMENT_SHAPE[0])
 
         return current_states, new_current_states
@@ -386,7 +315,6 @@ class DrugSelector:
 
         return np.array(q_table)
 
-
     def compute_implied_policy(self, update):
         '''
         Function to compute the implied policy learned by the DQ learner. 
@@ -403,17 +331,16 @@ class DrugSelector:
         policy = []
 
         if self.env.TRAIN_INPUT == "state_vector":
-        
-            for s in range(len(self.env.state_vector)):
 
+            for s in range(len(self.env.state_vector)):
                 self.env.state_vector = np.zeros((2 ** self.env.N, 1))
                 self.env.state_vector[s] = 1
                 action = np.argmax(self.get_qs())
-                policy.append(to_categorical(action, 
-                              num_classes = len(self.env.drugs)))
-                
-        else:  #if the train input was fitness
-            #put together action list
+                policy.append(to_categorical(action,
+                                             num_classes=self.env.action_space_size))
+
+        else:  # if the train input was fitness
+            # put together action list
             a_list = to_categorical([i for i in range(len(self.env.ACTIONS))])
             a_list = np.ndarray.tolist(a_list)
             for s in range(len(self.env.state_vector)):
@@ -422,45 +349,48 @@ class DrugSelector:
                 a_out = []
                 for a in range(len(a_list)):
                     if self.hp.WF:
-                        fit = np.dot(list(self.env.drugs[a].values()), state_vector)[0] #compute fitness for given state_vector, drug combination
+                        fit = np.dot(list(self.env.drugs[a].values()), state_vector)[
+                            0]  # compute fitness for given state_vector, drug combination
                     else:
-                        fit = np.dot(self.env.drugs[a], state_vector)[0] #compute fitness for given state_vector, drug combination
+                        fit = np.dot(self.env.drugs[a], state_vector)[
+                            0]  # compute fitness for given state_vector, drug combination
                     a_vec = deepcopy(a_list)[a]
-                    #append fitness to one-hot encoded action to mimic how the data are fed into the model
+                    # append fitness to one-hot encoded action to mimic how the data are fed into the model
                     a_vec.append(fit)
                     a_vec = np.array(a_vec)
-                    #reshape to feed into the model
+                    # reshape to feed into the model
                     tens = a_vec.reshape(-1, *self.env.ENVIRONMENT_SHAPE)
-                    #find the optimal action
-                    action_a = self.model.predict(tens, verbose = 0)[0].argmax()
-            
+                    # find the optimal action
+                    action_a = self.model.predict(tens, verbose=0)[0].argmax()
+
                     a_out.append(action_a)
-                    
+
                 policy.append(a_out)
-            #policy_a = policy_a/len(a_list)
-        
+            # policy_a = policy_a/len(a_list)
+
         if update:
             self.policies.append([policy, self.env.episode_number])
-        else: #only return the policy if we are not updating anything
+        else:  # only return the policy if we are not updating anything
             return policy
 
-    #function to get q vector for a given state
+    # function to get q vector for a given state
     def get_qs(self):
         if self.hp.TRAIN_INPUT == "state_vector":
             state_vector = np.array(self.env.state_vector)
             tens = state_vector.reshape(-1, *self.env.ENVIRONMENT_SHAPE)
         elif self.hp.TRAIN_INPUT == "fitness":
-            #convert all
+            # convert all
             sensor = np.array(self.env.sensor[3])
             tens = sensor.reshape(-1, *self.env.ENVIRONMENT_SHAPE)
         elif self.hp.TRAIN_INPUT == "pop_size":
             tens = self.env.pop_size.reshape(-1, *self.env.ENVIRONMENT_SHAPE)
-        else: 
+        else:
             return "error in get_qs()"
 
-        return self.model.predict(tens, verbose = 0)[0]
-    
-def compute_optimal_policy(agent, discount_rate = 0.99, num_steps = 20):
+        return self.model.predict(tens, verbose=0)[0]
+
+
+def compute_optimal_policy(agent, discount_rate=0.99, num_steps=20):
     '''
     Function to compute optimal policy based on reinforcement learning problem defined by the class DrugSelector
     ...
@@ -472,15 +402,16 @@ def compute_optimal_policy(agent, discount_rate = 0.99, num_steps = 20):
         encoding optimal actions a for all states s in S
     '''
 
-    env = dp_env(N = agent.env.N, sigma = agent.env.sigma, 
-                 drugs = agent.env.drugs, num_drugs= len(agent.env.drugs),
-                 phenom = agent.env.PHENOM)
-    
-    policy, V = backwards_induction(env = env, discount_rate= discount_rate, num_steps=num_steps)
+    env = dp_env(N=agent.env.N, sigma=agent.env.sigma,
+                 drugs=agent.env.drugs, num_drugs=len(agent.env.drugs),
+                 phenom=agent.env.PHENOM)
 
-    return policy,V
+    policy, V = backwards_induction(env=env, discount_rate=discount_rate, num_steps=num_steps)
 
-def compute_optimal_action(agent, policy, step, prev_action = False):
+    return policy, V
+
+
+def compute_optimal_action(agent, policy, step, prev_action=False):
     '''
     Function to compute the optimal action based on a deterministic policy. 
     ...
@@ -493,24 +424,27 @@ def compute_optimal_action(agent, policy, step, prev_action = False):
     Returns int 
         corresponding to optimal action
     '''
-    
-    index = [i for i,j in enumerate(agent.env.state_vector) if j == 1.][0]
+
+    index = [i for i, j in enumerate(agent.env.state_vector) if j == 1.][0]
 
     if prev_action:
-        if agent.env.TRAIN_INPUT == "state_vector": 
+        if agent.env.TRAIN_INPUT == "state_vector":
             action = np.argmax(policy[index])
         else:
-            action = policy[index][int(agent.env.prev_action)] #plus one because I made the bad decision to force the actions to be 1-indexed once upons a time
+            action = policy[index][
+                int(agent.env.prev_action)]  # plus one because I made the bad decision to force the actions to be 1-indexed once upons a time
     else:
-        action = policy[index][step]  #plus one because I made the bad decision to force the actions to be 1,2,3,4 once upon a time
-    
+        action = policy[index][
+            step]  # plus one because I made the bad decision to force the actions to be 1,2,3,4 once upon a time
+
     return action
-    
-#'main' function that iterates through simulations to train the agent
-def practice(agent, naive = False, standard_practice = False, 
-             dp_solution = False, pre_trained = False, discount_rate = 0.99,
-             policy = "none", prev_action = False, wf = False, train_freq = 1, 
-             compute_implied_policy_bool = False):
+
+
+# 'main' function that iterates through simulations to train the agent
+def practice(agent, naive=False, standard_practice=False,
+             dp_solution=False, pre_trained=False, discount_rate=0.99,
+             policy="none", prev_action=False, wf=False, train_freq=1,
+             compute_implied_policy_bool=False):
     '''
     Function that iterates through simulations to train the agent. Also used to test general drug cycling policies as controls for evodm 
     ...
@@ -539,145 +473,216 @@ def practice(agent, naive = False, standard_practice = False,
         reward vector, trained agent including master memory dictating what happened, and learned policy (if applicable)
     '''
     if dp_solution and not wf:
-        dp_policy, V = compute_optimal_policy(agent, discount_rate = discount_rate,
-                                              num_steps = agent.hp.RESET_EVERY)
+        dp_policy, V = compute_optimal_policy(agent, discount_rate=discount_rate,
+                                              num_steps=agent.hp.RESET_EVERY)
 
-    #this is a bit of a hack - we are coopting the code that tests the dp solution to
+    # this is a bit of a hack - we are coopting the code that tests the dp solution to
     #  test user-provided policies that use the same format
-    #These policies will almost never have anything to do with the dp solutions
-    if policy != "none": 
+    # These policies will almost never have anything to do with the dp solutions
+    if policy != "none":
         dp_policy = policy
         dp_solution = True
 
-    #every given number of episodes we are going to track the stats
-    #format is [average_reward, min_reward, max_reward]
+    # every given number of episodes we are going to track the stats
+    # format is [average_reward, min_reward, max_reward]
     reward_list = []
     losses_list = []
-    #initialize list of per episode rewards
-    #ep_rewards = []
-    count=1
-    for episode in tqdm(range(1, agent.hp.EPISODES + 1), ascii=True, unit='episodes', 
-                        disable = True if any([dp_solution, naive, pre_trained]) else False):
+    # initialize list of per episode rewards
+    # ep_rewards = []
+    count = 1
+    num_experiences = 0
+
+    if agent.env.SEASCAPES:
+        pass
+    else:
+        pass
+    for episode in tqdm(range(1, agent.hp.EPISODES + 1), ascii=True, unit='episodes',
+                        disable=True if any([dp_solution, naive, pre_trained]) else False):
         # Restarting episode - reset episode reward and step number
-        #episode_reward = 0
+        # episode_reward = 0
         if pre_trained:
             agent.hp.epsilon = 0
 
-        for i in range(agent.hp.RESET_EVERY+1):
-            if i==0:
+        for i in range(agent.hp.RESET_EVERY + 1):
+            if i == 0:
                 agent.env.step()
+                num_experiences += 1
                 continue
-            i_fixed =i-1 #correct for the drastic step we had to take up above ^
+            i_fixed = i - 1  # correct for the drastic step we had to take up above ^
             # This part stays mostly the same, the change is to query a model for Q values
             if np.random.random() > agent.hp.epsilon:
                 # Get action from Q table
                 if naive:
                     if standard_practice and not wf:
-                        #Only change the action if fitness is above 0.9
+                        # Only change the action if fitness is above 0.9
                         if np.mean(agent.env.fitness) > 0.9:
-                            avail_actions = [action for action in agent.env.ACTIONS if action != agent.env.action] #grab all actions except the one currently selected
-                            agent.env.action = random.sample(avail_actions, k = 1)[0] #need to take the first element of the list because thats how random.sample outputs it
-                    else: 
+                            avail_actions = [action for action in agent.env.ACTIONS if
+                                             action != agent.env.action]  # grab all actions except the one currently selected
+
+                            agent.env.action = random.sample(avail_actions, k=1)[
+                                0]  # need to take the first element of the list because thats how random.sample outputs it
+                    else:
                         if wf:
-                            agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS)))
+                            agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS), np.max(agent.env.ACTIONS)))
                         else:
-                            agent.env.action = random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS))
+                            agent.env.action = random.randint(np.min(agent.env.ACTIONS), np.max(agent.env.ACTIONS))
                 elif dp_solution:
-                    agent.env.action = compute_optimal_action(agent, dp_policy, step = i_fixed, prev_action=prev_action)
+                    agent.env.action = compute_optimal_action(agent, dp_policy, step=i_fixed, prev_action=prev_action)
                 else:
                     if wf:
-                        agent.env.update_drug(np.argmax(agent.get_qs()))
+                        agent.env.update_drug(np.argmax(agent.get_qs()))  # TODO CHANGE ALL TO SEASCAPES
                     else:
                         agent.env.action = np.argmax(agent.get_qs())
             else:
                 # Get random action
                 if standard_practice and not wf:
-                        #Only change the action if fitness is above 0.9
+                    # Only change the action if fitness is above 0.9
                     if np.mean(agent.env.fitness) > 0.9:
-                        avail_actions = [action for action in agent.env.ACTIONS if action != agent.env.action] #grab all actions except the one currently selected
-                        agent.env.action = random.sample(avail_actions, k = 1)[0] #need to take the first element of the list because thats how random.sample outputs it
+                        avail_actions = [action for action in agent.env.ACTIONS if
+                                         action != agent.env.action]  # grab all actions except the one currently selected
+                        agent.env.action = random.sample(avail_actions, k=1)[
+                            0]  # need to take the first element of the list because thats how random.sample outputs it
                 elif dp_solution:
-                    agent.env.action = compute_optimal_action(agent, dp_policy, step = i_fixed, prev_action = prev_action)
+                    agent.env.action = compute_optimal_action(agent, dp_policy, step=i_fixed, prev_action=prev_action)
                 elif wf:
-                    agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS)))
-                else: 
-                    agent.env.action = random.randint(np.min(agent.env.ACTIONS),np.max(agent.env.ACTIONS))
+                    agent.env.update_drug(random.randint(np.min(agent.env.ACTIONS), np.max(agent.env.ACTIONS)))
+                else:
+                    agent.env.action = random.sample(agent.env.ACTIONS, k=1)[0]
 
-
-            #we don't save anything - it stays in the class
+            # we don't save anything - it stays in the class
             agent.env.step()
+            num_experiences += 1
 
-            #reward = agent.env.sensor[2]
-            #episode_reward += reward
+            # reward = agent.env.sensor[2]
+            # episode_reward += reward
 
             # Every step we update replay memory and train main network - only train if we are doing a not naive run
             agent.update_replay_memory()
 
             if not any([dp_solution, naive, pre_trained]):
-                if count % train_freq == 0: #this will prevent us from training every freaking time step
-                    loss=agent.train()
+                if count % train_freq == 0:  # this will prevent us from training every freaking time step
+                    loss = agent.train()
                     if episode % 10 == 0:
                         losses_list.append(loss)
                     if train_freq > agent.hp.RESET_EVERY and compute_implied_policy_bool:
                         if not agent.hp.NUM_EVOLS > 1:
-                            agent.compute_implied_policy(update = True)
+                            agent.compute_implied_policy(update=True)
 
-            if agent.env.done: # break if either of the victory conditions are met
-                break #check out calc_reward in the evol_env class for how this is defined
+            if agent.env.done:  # break if either of the victory conditions are met
+                break  # check out calc_reward in the evol_env class for how this is defined
 
-            count +=1 #keep track of total number of time steps that pass
+            count += 1  # keep track of total number of time steps that pass
 
         # Append episode reward to a list and log stats (every given number of episodes)
-        #ep_rewards.append(episode_reward)
+        # ep_rewards.append(episode_reward)
         if not episode % agent.hp.AGGREGATE_STATS_EVERY or episode == 1:
-          #  average_reward = sum(
-           #     ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])/len(ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])
-           # min_reward = min(ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])
-           # max_reward = max(ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])
-           # reward_list.append([episode, average_reward, min_reward, max_reward])
+            #  average_reward = sum(
+            #     ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])/len(ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])
+            # min_reward = min(ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])
+            # max_reward = max(ep_rewards[-agent.hp.AGGREGATE_STATS_EVERY:])
+            # reward_list.append([episode, average_reward, min_reward, max_reward])
 
-            #update the implied policy vector
+            # update the implied policy vector
             if not any([dp_solution, naive, pre_trained]):
                 if not agent.hp.NUM_EVOLS > 1 and compute_implied_policy_bool:
                     if not train_freq > agent.hp.RESET_EVERY:
-                        agent.compute_implied_policy(update = True)
+                        agent.compute_implied_policy(update=True)
 
             # Save model, but only when min reward is greater or equal a set value
             # haven't figured out what min reward is for that
-            #if min_reward >= MIN_REWARD:
-             #   agent.model.save(
-              #      f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
+        # if min_reward >= MIN_REWARD:
+        #   agent.model.save(
+        #      f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
 
         # Decay epsilon - only if agent is not naive -- since we are calling it twice
+        # Only decay if the agent has reached the minimum size of replay buffer
         if not naive:
-            if agent.hp.epsilon > agent.hp.MIN_EPSILON:
-                agent.hp.epsilon *= agent.hp.EPSILON_DECAY
-                agent.hp.epsilon = max(agent.hp.MIN_EPSILON, agent.hp.epsilon)
+            agent.hp.epsilon *= agent.hp.EPSILON_DECAY
+            agent.hp.epsilon = max(agent.hp.MIN_EPSILON, agent.hp.epsilon)
+            if num_experiences < agent.hp.MIN_REPLAY_MEMORY_SIZE:
+                agent.hp.epsilon = 1
 
         if episode % 10 == 0 and not naive and not dp_solution:
             policy = agent.compute_implied_policy(update=False)
-            print("Episode ", episode, "| calculated policy: ", np.array([np.argmax(s) for s in policy]), " | epsilon: ", agent.hp.epsilon, " | fitness: ", np.mean(agent.env.fitness), " | loss: ", losses_list[-1])
+            # TODO Change to initially training on which drug to use, then to training on dose
+            # Calculated policy holds for even when the action is dose and not drug
+            calculated_policy = np.array([np.argmax(s) for s in policy])
+            fitness = calculate_simulated_fitness(agent.env.SEASCAPES, calculated_policy, agent.env)
+            print("Episode ", episode, "| calculated policy: ", calculated_policy, " | epsilon: ", agent.hp.epsilon,
+                  " | fitness: ", fitness, " | loss: ", losses_list[-1])
 
         # reset environment for next iteration
         agent.env.reset()
-
 
     if dp_solution:
         policy = dp_policy
     elif naive:
         policy = []
-        V=[]
+        V = []
     elif pre_trained:
         policy = []
-        V=[]
+        V = []
     elif compute_implied_policy_bool:
-        policy = agent.compute_implied_policy(update = False)
+        policy = agent.compute_implied_policy(update=False)
         print("POLICY LENGTH ", len(policy))
-        V=[]
+        V = []
     else:
         policy = []
         V = []
     return reward_list, agent, policy, V
 
 
+def run_sim_seascape(policy, drugs, num_episodes=20, episode_length=20):
+    '''
+    Currently only works for a SSWM problem
+    Args:
+        policy:
+        drugs:
+        num_episodes:
+        episode_length:
 
+    Returns:
+
+    '''
+    ss = [Seascape(N=4, ls_max=drug, sigma=0.5) for drug in drugs]
+
+    episode_numbers = []
+    states = []
+    actions = []
+    fitnesses = []
+    time_steps = []
+
+    for i in range(num_episodes):
+
+        state = 0  # Initial state vector
+        action = None
+        fitness = 0
+        for j in range(episode_length):
+            if policy is not None:
+                action = policy[state]
+            else:
+                action = (np.random.randint(15), np.random.randint(8)) #FIXME make this dynamic
+            fitness = ss[action[0]].ss[action[1]][state]
+
+            states.append(state)
+            actions.append(action)
+            fitnesses.append(fitness)
+
+            state = np.argmax(ss[action[0]].get_TM(action[1])[state])
+            time_steps.append(j)
+
+            episode_numbers.append(i)
+
+    results_df = pd.DataFrame(
+        {"Episode": episode_numbers, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
+    return results_df
+
+
+def calculate_simulated_fitness(seascapes, policy, env):
+    if seascapes:
+        policy_new = [(env.drug_policy[i], policy[i]) for i in range(len(policy))]
+    else:
+        policy_new = [(policy[i], 0) for i in range(len(policy))]
+
+    results = run_sim_seascape(policy_new, define_mira_landscapes())
+    return results["Fitness"].mean()

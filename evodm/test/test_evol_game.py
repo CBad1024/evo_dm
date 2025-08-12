@@ -1,6 +1,8 @@
+from evodm import hyperparameters
 from evodm import evol_env, generate_landscapes, normalize_landscapes, run_sim
 from evodm.evol_game import discretize_state, define_mira_landscapes, evol_env_wf
 from evodm.data import define_dag_seascapes
+from evodm.examples.mira_mdp import run_sim_wf
 import pytest
 import numpy.testing as npt
 import numpy as np
@@ -370,3 +372,6 @@ def test_num_evols():
 
 
 
+def test_visualize_pop_counts():
+    hp = hyperparameters()
+    env = evol_env_wf(pop_size = hp.POP_SIZE, hgt_rate = hp.HGT_RATE)

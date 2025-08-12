@@ -1,5 +1,7 @@
 from evodm.learner import *
 from evodm.evol_game import define_mira_landscapes
+from evodm.hyperparameters import hyperparameters
+
 from evodm.landscapes import Landscape
 import pandas as pd
 import numpy as np
@@ -25,7 +27,7 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
                   starting_genotype = 0, train_freq = 100, 
                   compute_implied_policy_bool = False,
                   dense = False, master_memory = True,
-                  delay = 0, phenom = 0):
+                  delay = 0, phenom = 0, min_replay_memory_size = 1000, seascapes = False, cycling_policy = None, skip_to_seascape_training = False):
     """
     evol_deepmind is the main function that initializes and trains a learner to switch between n drugs
     to try and minimize the fitness of a population evolving on a landscape.
@@ -116,10 +118,13 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     hp.MASTER_MEMORY = master_memory
     hp.DELAY= int(delay)
     hp.PHENOM = phenom
+    hp.MIN_REPLAY_MEMORY_SIZE = min_replay_memory_size
+    #maintain distinction between hp.SEASCAPES and seascapes.
+
 
     #gotta modulate epsilon decay based on the number of episodes defined
     #0.005 = epsilon_decay^episodes
-    hp.EPSILON_DECAY = 0.999
+    hp.EPSILON_DECAY = 0.99
 
     if pre_trained and agent != "none":
         agent.master_memory = []
@@ -134,18 +139,41 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     agent = DrugSelector(hp = hp, drugs = drugs)
     naive_agent = DrugSelector(hp=hp, drugs = drugs) #otherwise it all gets overwritten by the actual agent (changed from deepcopy(agent)
 
+    if not skip_to_seascape_training:
+        rewards, agent, drug_policy_raw, V = practice(agent, naive=False, wf=wf,
+                                             train_freq=train_freq,
+                                             compute_implied_policy_bool=compute_implied_policy_bool)  # added arg for train frequency
 
-    rewards, agent, policy, V = practice(agent, naive=False, wf=wf,
-                                         train_freq=train_freq,
-                                         compute_implied_policy_bool=compute_implied_policy_bool)  # added arg for train frequency
+        drug_policy = np.array([np.argmax(s) for s in drug_policy_raw]) #converts from one-hot encoding to drug ids
+    else:
+        drug_policy = cycling_policy
+        rewards = None
+        agent = None
+        drug_policy_raw = None
+        V = None
+    if seascapes:
+        #Train new agent with seascapes
+        hp.SEASCAPES = True
+        hp.drug_policy = drug_policy
+        hp.EPISODES = 120
+        agent_ss = DrugSelector(hp=hp, drugs=define_mira_landscapes())
+        rewards_ss, agent_ss, dosage_policy, V_ss = practice(agent_ss, naive=False, wf=False, train_freq=1,
+                                                                 compute_implied_policy_bool=True)
+    else:
+        rewards_ss = []
+        agent_ss = []
+        dosage_policy = []
+        V_ss = []
+
+
 
     #run the agent in the naive case and then in the reg case
     naive_rewards, naive_agent, naive_policy, V = practice(naive_agent, naive = True, 
                                                            standard_practice=standard_practice, wf=wf)
-    if not any([average_outcomes, wf]):
-        dp_agent = DrugSelector(hp=hp, drugs = drugs) #changed from deepcopy(agent)
-        dp_rewards, dp_agent, dp_policy, dp_V = practice(dp_agent, dp_solution = True,
-                                                         discount_rate= hp.DISCOUNT)
+    # if not any([average_outcomes, wf]):
+    #     dp_agent = DrugSelector(hp=hp, drugs = drugs) #changed from deepcopy(agent)
+    #     dp_rewards, dp_agent, dp_policy, dp_V = practice(dp_agent, dp_solution = True,
+    #                                                      discount_rate= hp.DISCOUNT)
 
     if wf:
         dp_policy=[]
@@ -157,9 +185,12 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
         file =open(savepath, 'wb')
         pickle.dump(agent, file)
         file.close()
-
+    dp_agent = None
+    dp_rewards = None
+    dp_policy = None
+    dp_V = None
     return [rewards, naive_rewards, agent, naive_agent, dp_agent, dp_rewards,
-            dp_policy, naive_policy, policy, dp_V]
+            dp_policy, naive_policy, drug_policy, dp_V, rewards_ss, agent_ss, dosage_policy, V_ss]
 
 def load_agent(savepath):
     file = open(savepath, 'rb')
