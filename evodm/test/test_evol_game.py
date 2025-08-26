@@ -2,7 +2,7 @@ from evodm import hyperparameters
 from evodm import evol_env, generate_landscapes, normalize_landscapes, run_sim
 from evodm.evol_game import discretize_state, define_mira_landscapes, evol_env_wf
 from evodm.data import define_dag_seascapes
-from evodm.examples.mira_mdp import run_sim_wf
+from evodm.examples.mira_mdp import run_sim_tianshou
 import pytest
 import numpy.testing as npt
 import numpy as np
