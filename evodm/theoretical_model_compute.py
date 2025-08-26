@@ -507,7 +507,7 @@ def solve_pareto_frontier(fitness_landscape, plot_results=True, plot_random = Tr
     print(f"Fitness matrix:\n{fitness_matrix}")
 
     # Use same lambda range for comparison
-    lambda_range = np.arange(-2, 2, 0.01) #TODO test negative values as well and also test for absorbing states for multiple eigenvectors
+    lambda_range = np.arange(-2, 2, 0.01)
 
     # lambda_range = np.linspace(0, 2, 101)
     #eigenvalue 1
