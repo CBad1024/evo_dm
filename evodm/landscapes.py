@@ -940,7 +940,7 @@ class Seascape(Landscape):
                                    adjMut])  # Creates list of fitnesses for each corresponding genotype that is 1 mutation away.
 
                 fittest = adjMut[np.argmax(adjFit)]  # Find the most fit mutation
-                if fittest < self.ss[
+                if self.ss[conc, fittest] < self.ss[
                     conc, i]:  # If the most fit mutation is less fit than the current genotype, stay in the current genotype.
                     TM[i, i] = 1
                 else:

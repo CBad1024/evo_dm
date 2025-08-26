@@ -5,19 +5,19 @@ import torch
 from keras.optimizers import Adam
 from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import DummyVectorEnv
-from tianshou.policy import PPOPolicy, BasePolicy
-from tianshou.trainer import OnpolicyTrainer
+from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
+from tianshou.trainer import OnpolicyTrainer, OffpolicyTrainer
 from tianshou.utils import TensorboardLogger
 from tianshou.utils.net.common import Net
 from tianshou.utils.net.discrete import Actor, Critic
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
 
-from evodm.evol_game import WrightFisherEnv
+from evodm.evol_game import WrightFisherEnv, SSWMEnv
 from evodm.hyperparameters import Presets as P
 
 # Logger for tensorboard
-log_path = "./log/wf_ppo"
+log_path = "./log/RL"
 os.makedirs(log_path, exist_ok=True)
 writer = SummaryWriter(log_path)
 logger = TensorboardLogger(writer)
@@ -32,9 +32,12 @@ def load_testing_envs():
     return envs
 
 
-def load_best_policy(p: P, filename: str = non_seascape_policy):
+def load_best_policy(p: P, filename: str = non_seascape_policy, ppo = False):
     train_envs, test_envs = WrightFisherEnv.getEnv(4, 2, seascapes_run)
-    policy = get_ppo_policy(p, train_envs)
+    if ppo:
+        policy = get_ppo_policy(p, train_envs)
+    else:
+        policy = get_dqn_policy(p, train_envs)
     best_policy = load_best_fn(policy=policy, filename=filename)
     return best_policy
 
@@ -43,6 +46,37 @@ def load_random_policy(p: P):
     train_envs, test_envs = WrightFisherEnv.getEnv(4, 2, seascapes_run)
     policy = get_ppo_policy(p, train_envs)
     return policy
+
+
+
+def train_sswm_landscapes(p: P):
+    train_envs, test_envs = SSWMEnv.getEnv(4, 2)
+    policy = get_dqn_policy(p, train_envs)
+
+    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
+    test_collector = Collector(policy, test_envs)
+
+    drug_trainer = OffpolicyTrainer(
+        policy=policy,
+        max_epoch=p.epochs,
+        batch_size=p.batch_size,
+        train_collector=train_collector,
+        test_collector=test_collector,
+        episode_per_test=p.test_episodes,
+        step_per_collect= p.batch_size * 10,
+        step_per_epoch=p.train_steps_per_epoch,
+        save_best_fn= save_best_fn,
+        logger=logger,
+    )
+    result = drug_trainer.run()
+
+    print(f'Drug Cycling Training finished with result: {result}')
+
+    # Testing
+    test_result = test_collector.collect(n_episode=p.test_episodes)
+    print(f'Final testing result: {test_result}')
+
+
 
 
 def train_wf_landscapes(p: P, seascapes=False):
@@ -145,6 +179,41 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
     return policy
 
 
+def get_dqn_policy(p: P, train_envs: DummyVectorEnv):
+    def init_dqn_agent():
+        # Model and optimizer
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        net = Net(
+            state_shape=p.state_shape,
+            action_shape=p.num_actions,
+            hidden_sizes=[128, 128],
+            device=device
+        )
+        return net
+
+    net = init_dqn_agent()
+    optim = Adam(net.parameters(), lr=p.lr)
+
+    policy = DQNPolicy(
+        model=net,
+        optim=optim,
+        action_space=train_envs.get_env_attr("action_space")[0],
+        discount_factor=0.99,
+        estimation_step=2,
+        target_update_freq=p.batch_size * 10,
+    )
+    print("Policy Action Space: ", policy.action_space)
+    return policy
+
+
+def save_best_fn_sswm(policy: BasePolicy):
+    # Logger
+    filename = "best_policy_sswm.pth"
+    log_path = "./log/sswm_dqn"
+    os.makedirs(log_path, exist_ok=True)
+
+    torch.save(policy.state_dict(), os.path.join(log_path, filename))
+
 def save_best_fn(policy: BasePolicy):
     # Logger
     # if seascapes, then save to best_policy_ss.pth
@@ -154,12 +223,23 @@ def save_best_fn(policy: BasePolicy):
         filename = seascape_policy
     else:
         filename = non_seascape_policy
-    log_path = "./log/wf_ppo"
+
+    #Remove this later
+
+    filename = "best_policy_sswm.pth"
+
+    log_path = "./log/RL"
     os.makedirs(log_path, exist_ok=True)
 
     torch.save(policy.state_dict(), os.path.join(log_path, filename))
 
 
 def load_best_fn(policy: BasePolicy, filename: str = "best_policy.pth"):
+
+    policy.load_state_dict(torch.load(os.path.join(log_path, filename)))
+    return policy
+
+def load_best_fn_sswm(policy: BasePolicy, filename: str = "best_policy_sswm.pth"):
+
     policy.load_state_dict(torch.load(os.path.join(log_path, filename)))
     return policy

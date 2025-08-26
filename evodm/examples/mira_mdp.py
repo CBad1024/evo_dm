@@ -4,17 +4,18 @@ import logging
 
 import numpy as np
 import pandas as pd
+import torch
 from matplotlib import pyplot as plt
 from tianshou.data import Batch
-from tianshou.policy import PPOPolicy
+from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
 
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
-from evodm.evol_game import define_mira_landscapes, evol_env, WrightFisherEnv
+from evodm.evol_game import define_mira_landscapes, evol_env, WrightFisherEnv, SSWMEnv
 from evodm.exp import evol_deepmind
 from evodm.hyperparameters import Presets
 from evodm.hyperparameters import hyperparameters
 from evodm.landscapes import Seascape, SeascapeUtils
-from evodm.tianshou_learner import load_best_policy, load_random_policy, train_wf_landscapes
+from evodm.tianshou_learner import load_best_policy, load_random_policy, train_wf_landscapes, train_sswm_landscapes
 
 # Set up logging
 timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -168,14 +169,13 @@ def run_sim_seascape(policy, drugs, num_episodes=50, episode_length=20):
     return results_df
 
 
-def run_sim_wf(env: WrightFisherEnv, policy: PPOPolicy, drugs, num_episodes=10, episode_length=20):
+def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20):
     """
     Simulates the environment for a number of episodes using a given policy.
 
     Args:
         env: the evol_env_wf environment
         policy (np.array): The policy to follow.
-        drugs (list): List of drug landscapes.
         num_episodes (int): The number of simulation episodes.
         episode_length (int): The length of each episode.
 
@@ -231,10 +231,10 @@ def run_wright_fisher(train: bool, seascapes: bool = False):
     best_policy = load_best_policy(p, filename=filename)
     env = WrightFisherEnv(seascapes=seascapes)
     if not seascapes:
-        results_df = run_sim_wf(env=env, policy=best_policy, drugs=define_mira_landscapes())
+        results_df = run_sim_tianshou(env=env, policy=best_policy, drugs=define_mira_landscapes())
     else:
 
-        results_df = run_sim_wf(env=env, policy=best_policy, drugs=env.drug_seascapes)
+        results_df = run_sim_tianshou(env=env, policy=best_policy, drugs=env.drug_seascapes)
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
 
     print("\nAverage WF fitness: ", np.mean(results_df["Fitness"]))
@@ -259,10 +259,10 @@ def run_wright_fisher(train: bool, seascapes: bool = False):
 
     random_policy = load_random_policy(p)
     if not seascapes:
-        random_results_df = run_sim_wf(env=WrightFisherEnv(), policy=random_policy, drugs=define_mira_landscapes())
+        random_results_df = run_sim_tianshou(env=WrightFisherEnv(), policy=random_policy, drugs=define_mira_landscapes())
     else:
         env.reset()
-        random_results_df = run_sim_wf(env=env, policy=random_policy, drugs=define_mira_landscapes())
+        random_results_df = run_sim_tianshou(env=env, policy=random_policy, drugs=define_mira_landscapes())
     print("\nAverage Random WF fitness: ", np.mean(random_results_df["Fitness"]))
 
     # TODO compare to random policy
@@ -377,10 +377,23 @@ def run_rl(env, envdp):
     print("\nAverage fitness under RL_NN policy:", RL_NN_results['Fitness'].mean())
 
 
-#
-# def main_validate_theoretical_model():
-#     from evodm.theoretical_model_compute import solve_pareto_frontier
-#     # solve_pareto_frontier()
+
+def main_validate_theoretical_model(fitness_matrix = None, num_drugs = 2, num_mutations = 1):
+    from evodm.theoretical_model_compute import solve_pareto_frontier
+
+    if fitness_matrix is not None:
+        f_matrix = fitness_matrix
+    else:
+        f_matrix = np.random.random((num_drugs, 2 ** num_mutations))
+
+    solve_pareto_frontier(fitness_matrix)
+
+    main_simple_sswm()
+
+
+
+
+    solve_pareto_frontier(f_matrix)
 
 
 def main_mdp():
@@ -398,9 +411,55 @@ def main_wf_landscapes(train):
 def main_wf_seascapes(train):
     main(wf_test=True, wf_train=train, wf_seascapes=True)
 
+def main_simple_sswm(train = True):
+    p = Presets.p2_ls()
+
+    if train:
+        train_sswm_landscapes(p)
+
+    filename = "best_policy_sswm.pth"
+    best_policy : DQNPolicy = load_best_policy(p, filename=filename)
+    env = SSWMEnv()
+    results_df = run_sim_tianshou(env = env, policy=best_policy, num_episodes=10, episode_length=20)
+
+    print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
+
+    print("\nAverage WF fitness: ", np.mean(results_df["Fitness"]))
+
+    actions = results_df["Action"]
+
+    action_freq = {i: 0 for i in range(env.num_drugs)}
+    # print(action_freq.keys())
+
+    for action in actions:
+        action_freq[action] += 1
+
+    # Get action frequencies sorted
+    sorted_actions = np.array(list(action_freq.keys()))[np.argsort(np.array(list(action_freq.values())))][::-1]
+    reformatted_actions = [f"{(action % 10, int(action / 10))}: {action_freq[action]}" for action in sorted_actions]
+    print("Top actions: \n\n", reformatted_actions)
+
+    print(np.identity(2**env.N))
+
+
+    state_tensor = torch.FloatTensor(np.identity(2**env.N))
+
+
+
+    with torch.no_grad():
+        print(best_policy.model(state_tensor))
+        q_table = np.array(best_policy.model(state_tensor)[0])
+
+    print(q_table)
+
+
+
+
+
 
 if __name__ == "__main__":
-    main_mdp()
+    main_simple_sswm(train = True)
+    # main_mdp()
     # main_sswm()
     # main_wf_landscapes(train = True)
     # main_wf_seascapes(train = True)
