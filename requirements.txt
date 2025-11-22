@@ -1,4 +1,3 @@
-evodm~=1.1.2
 pytest~=8.4.1
 numpy~=1.26.4
 pandas~=2.3.1
