@@ -3,7 +3,6 @@ import torch
 from scipy.optimize import minimize
 import warnings
 import pandas as pd
-import sklearn
 import torch.optim as optim
 
 
@@ -676,5 +675,5 @@ def define_successful_landscapes():
 
 
 
-solve_pareto_frontier(define_successful_landscapes())
+# solve_pareto_frontier(define_successful_landscapes())
 

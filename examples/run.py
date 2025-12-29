@@ -1,6 +1,12 @@
 import builtins
 import datetime as dt
 import logging
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import from local source instead of installed package
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 import numpy as np
 import pandas as pd

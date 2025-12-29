@@ -109,7 +109,7 @@ class Presets:
 
     @staticmethod
     def p2_ls():
-        return Presets(state_shape = 4, num_actions = 8, lr=1e-4, epochs=30, train_steps_per_epoch=5000, test_episodes=10, batch_size=128, buffer_size=2048)
+        return Presets(state_shape = 4, num_actions = 8, lr=1e-4, epochs=5, train_steps_per_epoch=5000, test_episodes=10, batch_size=128, buffer_size=2048)
 
     @staticmethod
     def p2_test() :
