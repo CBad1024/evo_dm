@@ -2,10 +2,6 @@
 
 This document describes the high-level architecture of `evodm`, a reinforcement learning framework for optimizing dosing strategies in cancer populations.
 
-# Architecture Overview
-
-This document describes the high-level architecture of `evodm`, a reinforcement learning framework for optimizing dosing strategies in cancer populations.
-
 ## System Components
 
 The project is refactored into modular sub-packages within `evodm/` for better maintainability:
@@ -27,7 +23,7 @@ Defines the fundamental building blocks of the simulations.
 - **Legacy Learners** ([legacy_learner.py](file:///Users/chaaranathb/Developer/GitRepo/evodm-orig/evo_dm/evodm/agents/legacy_learner.py)): Individual implementations for specific experimental setups.
 
 ### 4. Utilities (`evodm/utils/`)
-- **`data.py`**: Data loading and seascape preprocessing.
+- **`data.py`** / **`est_growth_rates.py`**: Data loading, seascape preprocessing, and growth rate estimation from plate reader data.
 - **`misc.py`**: General purpose helpers and plotting functions.
 
 ## Data Flow

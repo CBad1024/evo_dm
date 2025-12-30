@@ -46,7 +46,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - [**Architecture Overview**](docs/architecture.md): How the system is built.
 - [**Evolutionary Methodology**](docs/methodology.md): Details on SSWM and Wright-Fisher dynamics.
 - [**RL Integration**](docs/rl_integration.md): How to train and use reinforcement learning agents.
-- [**Refactoring Proposals**](docs/refactoring_proposals.md): Recommendations for project organization.
+- [**Refactoring Walkthrough**](docs/walkthrough.md): Details on the recent project reorganization and modularization.
 
 ## Architecture
 
