@@ -6,7 +6,7 @@ from .core.landscapes import Landscape
 import pandas as pd
 import numpy as np
 from itertools import combinations
-from .est_growth_rates import * 
+from .utils.est_growth_rates import * 
 import pickle
 
 def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,

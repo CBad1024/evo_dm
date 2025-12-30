@@ -16,7 +16,7 @@ from tianshou.data import Batch
 from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
 
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
-from evodm.evol_game import define_mira_landscapes, evol_env, WrightFisherEnv, SSWMEnv
+from evodm.envs import define_mira_landscapes, evol_env, WrightFisherEnv, SSWMEnv
 from evodm.exp import evol_deepmind
 from evodm.core.hyperparameters import Presets, Hyperparameters
 from evodm.core.landscapes import Seascape
