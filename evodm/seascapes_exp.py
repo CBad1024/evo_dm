@@ -1,8 +1,8 @@
 #import fears
 #from fears.experiment import Experiment
 #from fears.population import Population
-from evodm.evol_game import *
-from evodm.data import *
+from .envs import *
+from .utils.data import *
 
 drugs = define_dag_seascapes(file = '../../../evodm_cancer/data/combined_seascapes_cleaned.csv')
 

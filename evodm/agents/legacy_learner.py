@@ -14,9 +14,9 @@ from keras.regularizers import L2
 from keras.utils import to_categorical
 from tqdm import tqdm
 
-from evodm.dpsolve import backwards_induction, dp_env
-from evodm.evol_game import evol_env, evol_env_wf, define_mira_landscapes
-from evodm.landscapes import Seascape
+from ..dpsolve import backwards_induction, dp_env
+from ..envs import evol_env, evol_env_wf, define_mira_landscapes
+from ..core.landscapes import Seascape
 import pandas as pd
 
 
@@ -70,7 +70,7 @@ class DrugSelector:
         Args
         ------
         self: class DrugSelector
-        hp: class hyperparameters
+        hp: class Hyperparameters
             hyperparameters that control the evodm architecture and the 
             evolutionary simulations used to train it
         drugs: list of numeric matrices

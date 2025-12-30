@@ -1,0 +1,766 @@
+import numpy as np
+import math
+import random
+import itertools
+import copy
+from tensorflow.keras.utils import to_categorical
+from ..core.landscapes import Landscape, Seascape
+from .helpers import (
+    generate_landscapes,
+    normalize_landscapes,
+    run_sim_ss,
+    run_sim,
+    s_solve,
+    define_mira_landscapes,
+    fast_choice
+)
+
+class evol_env:
+
+    # intialize the environment class - key variable is "train_input"
+    # train input determines whether the sensor records the state vector or
+    # the previous fitnesses
+    def __init__(self, drugs=None, N=5, sigma=0.5, correl=np.linspace(-1.0, 1.0, 51),
+                 phenom=0,
+                 train_input="state_vector", num_evols=1,
+                 random_start=False,
+                 num_drugs=4,
+                 concentrations=[0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.0],
+                 normalize_drugs=True,
+                 win_threshold=10,
+                 player_wcutoff=0.8,
+                 pop_wcutoff=0.95,
+                 win_reward=10,
+                 noise_modifier=1,
+                 add_noise=True,
+                 average_outcomes=False,
+                 total_resistance=False,
+                 starting_genotype=0,
+                 dense=False, cs=False,
+                 delay=0,
+                 seascapes=False, drug_policy=None):
+        # define switch for whether to record the state vector or fitness for the learner
+        self.TRAIN_INPUT = train_input
+        # define environmental variables
+        self.update_target_counter = 0
+        self.time_step = 0  # define for number of evolutionary steps counter
+        self.action_number = 0  # define number of actions being taken
+        self.episode_number = 1  # count the number of times through a given fitness paradigm we are going
+        if train_input == "pop_size" and num_evols != 1:
+            print("consider setting num_evols to 1 when using population size as the train input")
+        self.NUM_EVOLS = num_evols  # number of evolutionary steps per sample
+        self.NUM_OBS = 100  # number of "OD" readings per evolutionary step
+        self.pop_size = []
+
+        self.action_history = [] # history of actions taken by the agent
+
+        # should noise be introduced into the fitness readings?
+        self.NOISE_MODIFIER = noise_modifier
+        self.NOISE_BOOL = add_noise
+        self.AVERAGE_OUTCOMES = average_outcomes
+        self.SEASCAPES = seascapes
+        self.num_conc = len(concentrations)
+        self.concentrations = concentrations
+
+        # measurement delay (i.e. are state vector readings delayed by n time steps)
+        self.DELAY = delay
+        if self.DELAY > 0:
+            self.state_mem = []
+        # data structure for containing information the agent queries from the environment.
+        # the format is: [previous_fitness, current_action, reward, next_fitness]
+        self.sensor = []
+        # save environment variables
+        self.N = N
+        self.sigma = sigma
+        self.DENSE = dense
+        self.CS = cs
+        self.num_drugs = num_drugs
+        self.PHENOM = phenom
+
+        # Defining these in case self.reset is called
+        self.correl = correl
+
+        # define victory counters
+        self.player_wcount = 0
+        self.pop_wcount = 0
+
+        # define victory conditions for player and pop
+        self.PLAYER_WCUTOFF = player_wcutoff
+        self.POP_WCUTOFF = pop_wcutoff
+
+        self.drug_policy = drug_policy
+
+        # define victory threshold
+        self.WIN_THRESHOLD = win_threshold  # number of player actions before the game is called
+        self.WIN_REWARD = win_reward
+        self.STARTING_GENOTYPE = starting_genotype
+
+        self.done = False
+
+        # should each episode start with a random scatter of genotypes?
+        self.RANDOM_START = random_start
+        self.TOTAL_RESISTANCE = total_resistance
+
+        # define landscapes
+        self.define_landscapes(drugs=drugs, normalize_drugs=normalize_drugs)
+        # define action space and initial action.
+        self.define_actions()
+        self.action_space_size = len(self.ACTIONS)
+        ##initialize state vector
+        if self.RANDOM_START:
+            self.state_vector = np.ones((2 ** N, 1)) / 2 ** N
+        else:
+            self.state_vector = np.zeros((2 ** N, 1))
+            self.state_vector[starting_genotype][0] = 1
+
+        self.update_state_mem(state_vector=self.state_vector)
+
+        ##Define initial fitness
+        #FIXME Fixed
+        if self.SEASCAPES: #drugs is of form x: drug, y: concentration, z: state
+            self.fitness = [np.dot(self.drugs[self.curr_drug][self.action], self.state_vector)]
+        else:
+            self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]
+
+        if self.NOISE_BOOL:
+            self.sensor_fitness = self.add_noise(self.fitness)
+        else:
+            self.sensor_fitness = self.fitness
+
+        # Define the environment shape
+        if self.TRAIN_INPUT == "state_vector":  # give the state vector for every evolution
+            self.ENVIRONMENT_SHAPE = (len(self.state_vector), 1)
+        elif self.TRAIN_INPUT == "fitness":
+            self.ENVIRONMENT_SHAPE = (num_drugs + self.NUM_EVOLS,)
+        elif self.TRAIN_INPUT == "pop_size":
+            self.ENVIRONMENT_SHAPE = (self.NUM_OBS, 1)
+        else:
+            print("please specify state_vector, pop_size, or fitness for train_input when initializing the environment")
+            return
+
+    def define_actions(self):
+        # define the action space - this is a list of integers that the agent can take
+        # in the environment in the landscapes case.
+        # In the seascapes case, actions are simply the dosage used
+        #FIXME: THIS IS FIXED
+        if self.SEASCAPES:
+            print("Seascapes enabled")
+            self.ACTIONS = [i for i in range(self.num_conc)]
+
+        else:
+            self.ACTIONS = [i for i in range(self.num_drugs)]  # 0-indexed actions
+
+        self.action = 0  # first action - value will be updated by the learner
+        self.prev_action = 0
+        if self.SEASCAPES:
+            self.curr_drug = self.drug_policy[0]
+        self.action_history.append(self.action)
+    def define_landscapes(self, drugs, normalize_drugs):
+        # default behavior is to generate landscapes completely at random.
+        # define landscapes #this step is a beast - let's pull this out into it's own function
+        if drugs is None:
+            ## Generate landscapes - use whatever parameters were set in main()
+            self.landscapes, self.drugs = generate_landscapes(N=self.N,
+                                                               sigma=self.sigma,
+                                                               num_drugs=self.num_drugs,
+                                                               correl=self.correl,
+                                                               dense=self.DENSE,
+                                                               CS=self.CS)
+
+        else:
+            self.drugs = drugs
+        # Normalize landscapes if directed
+        if normalize_drugs:
+            self.drugs = normalize_landscapes(self.drugs)
+        #FIXME no changes needed here (seascapes only accessed during second part of training)
+        if self.SEASCAPES:
+            # In this case, access a seascapes object by drug name
+            self.seascapes = [None for i in range(len(self.drugs))]
+            for i in range(len(self.drugs)):
+
+                self.seascapes[i] = Seascape(seascape_fitness_data=drugs[i], N=self.N,
+                                             sigma=self.sigma, dense=self.DENSE, concentrations=self.concentrations)
+
+                # precompute the transition matrices
+                [self.seascapes[i].get_TM()]#FIXME change to phenom
+
+        else:
+            self.landscapes = [Landscape(ls=i, N=self.N, sigma=self.sigma,
+                                         dense=self.DENSE) for i in self.drugs]
+            # if self.PHENOM > 0:
+            #    [i.get_TM_phenom(phenom = self.PHENOM) for i in self.landscapes]
+            # else:
+            #    [i.get_TM() for i in self.landscapes] #pre-compute TM
+            [i.get_TM() for i in self.landscapes]
+
+        return
+
+    def step(self):
+
+        # update current time step of the sim
+        # update how many actions have been taken
+        self.time_step += self.NUM_EVOLS
+        self.action_number += 1
+        self.update_target_counter += 1
+
+        #TODO : change to implement a single learner to learn drug cycling and second to learn dosing strategy
+        # under seascapes the action should first be just the drug and for the second learner it should be the dose
+
+        # Run the sim under the assigned conditions
+        if self.action not in self.ACTIONS:  # Check if action is valid
+            raise ValueError(f"Invalid action {self.action}. Must be one of {self.ACTIONS}")
+        #TODO Change here
+        if self.SEASCAPES:
+            fitness, state_vector = run_sim_ss(evol_steps=self.NUM_EVOLS,
+                                            state_vector=self.state_vector,
+                                            ss=self.seascapes[self.curr_drug], #FIXME we need to access the seascapes[curr_drug]
+                                            average_outcomes=self.AVERAGE_OUTCOMES, conc = self.action)#action is the concentration
+        else:
+            fitness, state_vector = run_sim(evol_steps=self.NUM_EVOLS,
+                                        state_vector=self.state_vector,
+                                        ls=self.landscapes[self.action],  #action is the drug
+                                        average_outcomes=self.AVERAGE_OUTCOMES)
+
+        self.update_state_mem(state_vector=state_vector)
+
+        if self.NOISE_BOOL:
+            sensor_fitness = self.add_noise(fitness)
+        else:
+            sensor_fitness = fitness
+
+        self.define_sensor(fitness=fitness, sensor_fitness=sensor_fitness,
+                           state_vector=state_vector)
+
+        # update vcount
+        self.update_vcount(fitness=fitness)
+
+        # update the current fitness vector
+        self.fitness = fitness
+        self.sensor_fitness = sensor_fitness
+        # update the current state vector
+        self.state_vector = state_vector
+        # update action-1 - its assumed that self.action is updated prior to initiating env.step
+        #TODO change here
+        if self.SEASCAPES:
+            self.prev_action = self.action
+        else:
+            self.prev_action = float(self.action)  # type conversion
+        self.action_history.append(self.action)
+        if self.SEASCAPES:
+            self.curr_drug = self.drug_policy[np.argmax(self.state_vector)]  #takes the current drug as the one with the optimal drug policy in the given state
+        # done
+        return
+
+    def update_state_mem(self, state_vector):
+        if self.DELAY > 0:
+            if self.TRAIN_INPUT == "fitness":
+                return ("measurement delay only supported when train input is state_vector")
+            self.state_mem.append(state_vector)
+        return
+
+    def define_sensor(self, fitness, sensor_fitness, state_vector):
+        # Again, this is creating a stacked data structure where each time point provides
+        # [current_state, current_action, reward, next_state]
+        # [s_t, a_t, r_t, s_t+1]
+        # if self.delay > 0, this list will look like:
+        # [s_{t-delay}, a_t, r_t, s_{t-delay+1}]
+
+        if self.DELAY > 0 and len(self.state_mem) <= self.DELAY + 1:
+            return
+        if self.TRAIN_INPUT == "state_vector":
+            if self.DELAY > 0:
+                index = self.time_step - 1 - self.DELAY  # because time step is 1 indexed
+                state1 = self.state_mem[index]
+                state2 = self.state_mem[index + 1]
+            else:
+                state1 = self.state_vector
+                state2 = state_vector
+
+            self.sensor = [state1, self.action, self.calc_reward(fitness=fitness), state2]
+        elif self.TRAIN_INPUT == "fitness":
+            if self.NUM_EVOLS > 1 and self.time_step == self.NUM_EVOLS:  # otherwise the prev_fitness and fitness objects won't share the same shape.
+                return
+            # convert fitness + action into trainable state vector for n and n+1
+            prev_action_cat, action_cat = self.convert_fitness(fitness=sensor_fitness)
+            self.sensor = [prev_action_cat,
+                           self.action, self.calc_reward(fitness=fitness),
+                           action_cat]
+        elif self.TRAIN_INPUT == "pop_size":
+            ##Here we interpolate between the previous fitness and the next fitness
+            pop_size = self.growth_curve(new_fitness=fitness)
+            self.sensor = [self.pop_size, self.action, self.calc_reward(fitness=fitness), pop_size]
+            # update pop size vector
+            self.pop_size = pop_size
+        else:
+            print(
+                "please specify either state_vector, fitness, or pop_size for train_input when initializing the environment")
+            return
+
+    def convert_fitness(self, fitness):
+        # convert to lists
+        if self.NUM_EVOLS > 1:
+            prev_fitness = np.ndarray.tolist(self.sensor_fitness)
+            fitness = np.ndarray.tolist(fitness)
+        else:
+            prev_fitness = self.fitness
+
+        prev_action_cat = to_categorical(self.prev_action, num_classes=len(self.ACTIONS))  # Use 0-indexed action
+        prev_action_cat = np.ndarray.tolist(prev_action_cat)  # convert to list
+
+        # This checks if fitness is a list (will occur if num_evols > 1)
+        if isinstance(prev_fitness, list):
+            # append fitness values
+            for i in range(len(prev_fitness)):
+                prev_action_cat.append(prev_fitness[i])
+        else:
+            prev_action_cat.append(prev_fitness)
+        action_cat = to_categorical(self.action, num_classes=len(self.ACTIONS))  # Use 0-indexed action
+        action_cat = np.ndarray.tolist(action_cat)
+        # This checks if fitness is a list (will occur if num_evols > 1)
+        if isinstance(fitness, list):
+            for i in range(len(fitness)):
+                action_cat.append(fitness[i])
+        else:
+            action_cat.append(fitness)
+
+        return prev_action_cat, action_cat
+
+    def update_vcount(self, fitness):
+        if np.mean(fitness) < self.PLAYER_WCUTOFF:
+            self.player_wcount += 1
+        else:
+            self.player_wcount = 0  # make sure self.player_wcount only climbs with consecutive scores in that territory
+
+        if np.mean(fitness) > self.POP_WCUTOFF:
+            self.pop_wcount += 1
+        else:
+            self.pop_wcount = 0
+        return
+
+    def compute_average_fitness(self):
+        # function to compute the average fitness to all available drugs in the panel
+        fitnesses = []
+        for i in iter(self.ACTIONS):
+            fitness = np.dot(self.drugs[i], self.state_vector)  # Use 0-indexed action
+            fitnesses.append(fitness)
+
+        return np.mean(fitnesses)
+
+    def calc_reward(self, fitness, total_resistance=False, seascapes=False):
+        # okay so if fitness is low - this number will be higher
+        # "winning" the game is associated with a huge reward while losing a huge penalty
+
+        if total_resistance:
+            if self.pop_wcount >= self.WIN_THRESHOLD:
+                reward = -self.WIN_REWARD
+                self.DONE = True
+            elif self.player_wcount >= self.WIN_THRESHOLD:
+                reward = self.WIN_REWARD
+                self.DONE = True
+            else:
+                # CHANGE: reward is negative of fitness
+                #np.exp(1 - fit) - 1
+                diversity_bonus = self.compute_diversity_bonus(self.action_history)
+
+                reward = -fitness - diversity_bonus
+                if seascapes:
+                    reward += - 0.05 *np.log10(self.concentrations[self.action]) #penalize for high concentrations
+        else:
+            if self.pop_wcount >= self.WIN_THRESHOLD:
+                reward = -self.WIN_REWARD
+                self.DONE = True
+            elif self.player_wcount >= self.WIN_THRESHOLD:
+                reward = self.WIN_REWARD
+                self.DONE = True
+            else:
+                diversity_bonus = self.compute_diversity_bonus(self.action_history)
+                reward = -1 if np.mean(fitness) > 0.8 else -fitness - diversity_bonus
+                if seascapes:
+                    reward += -0.05*np.log10(self.concentrations[self.action]) #penalize for high concentrations
+
+        return reward
+
+    def compute_diversity_bonus(self, action_history):
+        """
+        Compute a diversity bonus based on the action history.
+        This function calculates the diversity of actions taken by the agent.
+        """
+        # TRY: length of unique actions vs length of all actions
+        #TRY: entropy of action history
+        unique_actions = set(action_history)
+        diversity_bonus = 0.5 - len(unique_actions) / len(self.ACTIONS)
+        return  diversity_bonus
+
+    def add_noise(self, fitness):
+        noise_param = np.random.normal(loc=0,
+                                       scale=(0.05 * self.NOISE_MODIFIER))
+
+        # muddy the fitness value with noise
+        if type(fitness) is not list:
+            return fitness + noise_param
+        else:
+            return [i + noise_param for i in fitness]
+
+    def growth_curve(self, new_fitness):
+        new_fitness = np.mean(new_fitness)
+        old_fitness = np.mean(self.fitness)
+
+        # handle edge cases where fitness is 0 or 1 (not sure its even possible)
+        if old_fitness == 1:
+            old_fitness = 0.999
+        elif old_fitness == 0:
+            old_fitness = 0.001
+
+        if new_fitness == 1:
+            new_fitness = 0.999
+        elif new_fitness == 0:
+            new_fitness = 0.001
+
+        # generate untransformed od_dist
+        od_dist_raw = np.linspace(s_solve(old_fitness), s_solve(new_fitness),
+                                  num=self.NUM_OBS)
+
+        state_vector = [1 / (1 + math.exp(-i)) for i in od_dist_raw]  # generate bounded sigmoid function
+
+        return np.array(state_vector)
+
+    def reset(self):
+        ##re-initialize state vector
+        ##initialize state vector
+        if self.DELAY > 0:
+            self.state_mem = []
+
+        if self.RANDOM_START:
+            self.state_vector = np.ones((2 ** self.N, 1)) / 2 ** self.N
+        else:
+            self.state_vector = np.zeros((2 ** self.N, 1))
+            self.state_vector[self.STARTING_GENOTYPE][0] = 1
+
+        # reset time step
+        self.time_step = 0
+
+        # reset fitness vector and action number
+        self.fitness = []
+        self.action_number = 0
+
+        # advance episode number
+        self.episode_number += 1
+
+        # re-initialize the action number
+        #FIXME: changed
+        self.action = 0
+
+        # re-initialize victory conditions
+        self.pop_wcount = 0
+        self.player_wcount = 0
+        self.done = False
+        # re-calculate fitness with the new state_vector
+        #TODO Change here
+        if self.SEASCAPES: # if seascapes, we need to access drugs[curr_drug][curr_conc] where curr_conc = action
+            self.fitness = [np.dot(self.drugs[self.curr_drug][self.action], self.state_vector)] #FIXME changed for now but need to implement curr_drug
+        else:
+            self.fitness = [np.dot(self.drugs[self.action], self.state_vector)]  # Use 0-indexed action
+        if self.NOISE_BOOL:
+            self.fitness = self.add_noise(self.fitness)
+        self.sensor = []
+
+class evol_env_wf:
+    def __init__(self, N=4, num_drugs=15, train_input='state_vector', pop_size=10000,
+                 gen_per_step=2, mutation_rate=1e-6, hgt_rate=1e-5,
+                 drugLandscape=None):
+
+        if drugLandscape is None:
+            drugLandscape = define_mira_landscapes()
+
+        self.update_target_counter = 0
+        # save everything
+        self.episode_number = 1
+        self.N = N
+        self.pop_size = pop_size
+        self.gen_per_step = gen_per_step
+        self.mutation_rate = mutation_rate
+        self.hgt_rate = hgt_rate
+        self.TRAIN_INPUT = train_input
+        self.NUM_DRUGS = num_drugs
+        self.pop = {}
+        self.sensor = []
+        self.history = []
+        self.fit = {}
+
+        self.alphabet = ['0', '1']
+        self.base_haplotype = ''.join(["0" for i in range(self.N)])
+
+        genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.N)]
+        drugs = []
+
+        self.pop[self.base_haplotype] = self.pop_size
+
+        for drug in range(self.NUM_DRUGS):
+            for i in range(len(genotypes)):
+                self.fit[genotypes[i]] = drugLandscape[drug][i]
+
+            drugs.append(copy.deepcopy(self.fit))
+            self.fit.clear()
+
+        self.drugs = drugs
+
+        self.action = 0
+        # select the first drug
+        self.drug = self.drugs[self.action]
+        self.prev_drug = self.drug
+        self.prev_action = 0.0
+
+        # housekeeping
+        self.step_number = 1  # step_number is analagous to step in the original simulations
+        self.time_step_number = 0  # time step number is the generation count
+        self.fitness = self.compute_pop_fitness(drug=self.drug, sv=self.pop)
+        self.state_vector = self.convert_state_vector(sv=self.pop)
+        # Stuff to make things not break
+        if self.TRAIN_INPUT == "state_vector":  # give the state vector for every evolution
+            self.ENVIRONMENT_SHAPE = (len(self.state_vector), 1)
+        elif self.TRAIN_INPUT == "fitness":
+            self.ENVIRONMENT_SHAPE = (self.NUM_DRUGS + 1,)
+
+        self.action_number = 0
+
+        self.ACTIONS = [i for i in
+                        range(self.NUM_DRUGS)]  # action space -no plus one because it was really really dumb
+
+        self.done = False
+        self.pop_counts = []
+
+    def update_sensor(self, pop):
+        # this is creating a stacked data structure where each time point provides
+        # [current_fitness, current_action, reward, next_fitness]
+        # or [current_state, current_action, reward, next_state]
+        if self.TRAIN_INPUT == "state_vector":
+            sv = self.convert_state_vector(sv=pop)
+            sv_prime = self.convert_state_vector(sv=self.pop)  # self.pop is
+        elif self.TRAIN_INPUT == 'fitness':
+            fit = self.compute_pop_fitness(sv=pop, drug=self.prev_drug)
+            fit_prime = self.compute_pop_fitness(sv=self.pop, drug=self.drug)
+            sv, sv_prime = self.convert_fitness(fitness=fit, fitness_prime=fit_prime)
+
+        fit = self.compute_pop_fitness(sv=self.pop, drug=self.drug)
+        self.sensor = [sv, self.action, np.exp(1 - fit) - 1, sv_prime]  # CHANGED REWARD TO exp(1-fit) - 1.
+
+    def compute_pop_fitness(self, drug, sv):
+        x = [(sv[i] * drug[i]) / self.pop_size for i in sv.keys()]
+        fit = np.sum(x)
+        return fit
+
+    def convert_state_vector(self, sv):
+        new_sv = np.zeros((self.N ** 2, 1))
+        keys = list(sv.keys())
+        for i in range(len(sv)):
+            # convert binary key to numeric
+            state = int(keys[i], 2)
+            val = sv[keys[i]] / self.pop_size
+            new_sv[state][0] = val
+
+        return new_sv
+
+    def update_drug(self, drug_num):
+        # Always use this method to update the drug
+        self.action = drug_num
+        self.prev_drug = self.drug
+        self.drug = self.drugs[self.action]
+
+    def step(self):  # just renaming this to match with the base evol_env format
+        # update action number
+        self.update_target_counter += 1
+        self.action_number += 1
+
+        pop_old = dict(self.pop)
+        if self.time_step_number == 0:
+            self.history.append(pop_old)
+        for i in range(self.gen_per_step):
+            self.time_step()
+            clone_pop = dict(self.pop)
+            self.history.append(clone_pop)
+            self.time_step_number += 1
+        # prep for next 'step'
+        self.time_step_number = 1
+        self.step_number += 1
+        self.update_sensor(pop=pop_old)
+        self.prev_action = float(self.action)
+        self.state_vector = self.convert_state_vector(sv=self.pop)
+        self.fitness = self.compute_pop_fitness(drug=self.drug, sv=self.pop)
+        self.pop_counts.append(self.pop.copy())
+
+    # reset the environment after an 'episode'
+    def reset(self):
+        self.episode_number += 1
+        self.action_number = 0
+        self.time_step_number = 0
+        self.step_number = 1
+        self.pop = {}
+        self.sensor = []
+        self.pop[self.base_haplotype] = self.pop_size
+
+        # reset drug stuff to baseline as well
+        self.action = 0
+        # select the first drug
+        self.drug = self.drugs[self.action]
+        self.state_vector = self.convert_state_vector(sv=self.pop)
+        self.fitness = self.compute_pop_fitness(drug=self.drug, sv=self.pop)
+        self.pop_counts = []
+
+    def time_step(self):
+        self.mutation_step()
+        # self.hgt_event()
+        self.offspring_step()
+
+    def mutation_step(self):
+        mutation_count = self.get_mutation_count()
+        for i in range(mutation_count):
+            self.mutation_event()
+
+    def hgt_step(self):
+        hgt_count = self.get_hgt_count()
+        for i in range(hgt_count):
+            self.hgt_event()
+
+    def get_mutation_count(self):
+        mean = self.mutation_rate * self.pop_size * self.N
+        return np.random.poisson(mean)
+
+    """
+    Function that find a random haplotype to mutate and adds that new mutant to the population. Reduces mutated population by 1.
+    """
+
+    def mutation_event(self):
+        haplotype = self.get_random_haplotype()
+        if self.pop[haplotype] > 1:
+            self.pop[haplotype] -= 1
+            new_haplotype = self.get_mutant(haplotype)
+            if new_haplotype in self.pop:
+                self.pop[new_haplotype] += 1
+            else:
+                self.pop[new_haplotype] = 1
+
+    """
+    Function that gets the number of hgt events we should see.
+    """
+
+    def get_hgt_count(self):
+        mean = self.hgt_rate * self.pop_size * self.N
+        return np.random.poisson(mean)
+
+    """
+    Function that find a random pair of haplotypes to mutate and do the hgt event
+    """
+
+    def hgt_event(self):
+        haplotype_1 = self.get_random_haplotype()
+        haplotype_2 = self.get_random_haplotype()
+        new_hap2 = ""
+        for i in range(len(haplotype_1)):
+            if haplotype_1[i] == '1' and haplotype_2[i] == '0':
+                new_hap2 += "1"
+            else:
+                new_hap2 += haplotype_2[i]
+
+        self.pop[haplotype_2] -= 1
+
+        if new_hap2 in self.pop:
+            self.pop[new_hap2] += 1
+        else:
+            self.pop[new_hap2] = 1
+
+    """
+    Chooses a random haplotype in the population that will be returned.
+    """
+
+    def get_random_haplotype(self):
+        haplotypes = list(self.pop.keys())
+        frequencies = [x / self.pop_size for x in self.pop.values()]
+        total = sum(frequencies)
+        frequencies = [x / total for x in frequencies]
+        return fast_choice(haplotypes, frequencies)
+        # return random.choices(haplotypes, weights=frequencies)[0]
+
+    """
+    Receives the haplotype to be mutated and returns a new haplotype with a mutation with all neighbor mutations equally probable.
+    """
+
+    def get_mutant(self, haplotype):
+        site = int(random.random() * self.N)
+        possible_mutations = list(self.alphabet)
+        possible_mutations.remove(haplotype[site])
+        mutation = random.choice(possible_mutations)
+        new_haplotype = haplotype[:site] + mutation + haplotype[site + 1:]
+        return new_haplotype
+
+    def convert_fitness(self, fitness, fitness_prime):
+        # convert to lists
+
+        prev_action_cat = to_categorical(self.prev_action - 1,
+                                         num_classes=len(self.ACTIONS))  # -1 because of the dumb python indexing system
+        prev_action_cat = np.ndarray.tolist(prev_action_cat)  # convert to list
+
+        # This checks if fitness is a list (will occur if num_evols > 1)
+
+        prev_action_cat.append(fitness)
+
+        action_cat = to_categorical(self.action - 1, num_classes=len(self.ACTIONS))
+        action_cat = np.ndarray.tolist(action_cat)
+        action_cat.append(fitness_prime)
+
+        return np.asarray(prev_action_cat), np.asarray(action_cat)
+
+    """
+    Gets the number of counts after an offspring step and stores them in the haplotype. If a population is reduced to zero then delete it.
+    """
+
+    def offspring_step(self):
+        haplotypes = list(self.pop.keys())
+        counts = self.get_offspring_counts()
+        for (haplotype, count) in zip(haplotypes, counts):
+            if (count > 0):
+                self.pop[haplotype] = count
+            else:
+                del self.pop[haplotype]
+
+    """
+    Returns the new population count for each haplotype given offspring counts weighted by fitness of haplotype
+    """
+
+    def get_offspring_counts(self):
+        haplotypes = list(self.pop.keys())
+        frequencies = [self.pop[haplotype] / self.pop_size for haplotype in haplotypes]
+        fitnesses = [self.drug[haplotype] for haplotype in haplotypes]
+        weights = [x * y for x, y in zip(frequencies, fitnesses)]
+        total = sum(weights)
+        weights = [x / total for x in weights]
+        return list(np.random.multinomial(self.pop_size, weights))
+
+    #####################################################################################################################
+    """Shannon Diversity Index"""
+
+    def calc_shannon_diversity(self):
+        H = 0
+        for i in iter(self.pop.keys()):
+            allele_proportion = self.pop[i] / self.pop_size
+            H += (allele_proportion * math.log(allele_proportion))
+
+        return -H
+
+    def visualize_pop_counts(self):
+        """
+        Function to display the counts of each genotype in the population.
+        """
+        import matplotlib.pyplot as plt
+
+        haplotypes = list(self.pop.keys())
+
+        fig, ax = plt.subplots()
+        x = np.arange(len(self.pop_counts))
+        for haplotype in haplotypes:
+            ax.plot(x,[self.pop_counts[i][haplotype] for i in range(len(self.pop_counts))], label=haplotype)
+        plt.xlabel('Time Steps')
+        plt.ylabel('Counts')
+        plt.title('Population Counts of Each Haplotype')
+        plt.tight_layout()
+        plt.legend()
+        plt.show()

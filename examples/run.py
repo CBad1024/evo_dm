@@ -18,10 +18,9 @@ from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
 from evodm.evol_game import define_mira_landscapes, evol_env, WrightFisherEnv, SSWMEnv
 from evodm.exp import evol_deepmind
-from evodm.hyperparameters import Presets
-from evodm.hyperparameters import hyperparameters
-from evodm.landscapes import Seascape, SeascapeUtils
-from evodm.tianshou_learner import load_best_policy, load_random_policy, train_wf_landscapes, train_sswm_landscapes
+from evodm.core.hyperparameters import Presets, Hyperparameters
+from evodm.core.landscapes import Seascape
+from evodm.agents.tianshou_agent import load_best_policy, load_random_policy, train_wf_landscapes, train_sswm_landscapes
 
 # Set up logging
 timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -339,7 +338,7 @@ def run_rl(env, envdp):
     num_episodes = 350
     batch_size = 256
 
-    hp = hyperparameters()
+    hp = Hyperparameters()
 
     hp.N = v_N
     hp.mira = v_mira

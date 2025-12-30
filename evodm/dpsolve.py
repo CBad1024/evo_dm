@@ -1,5 +1,5 @@
-from evodm.evol_game import *
-from evodm.landscapes import Landscape
+from .envs import *
+from .core.landscapes import Landscape
 from mdptoolbox.mdp import FiniteHorizon, ValueIteration, PolicyIteration
 import numpy as np
 

@@ -1,12 +1,12 @@
-from evodm.learner import *
-from evodm.evol_game import define_mira_landscapes
-from evodm.hyperparameters import hyperparameters
+from .agents.legacy_learner import *
+from .envs import define_mira_landscapes
+from .core.hyperparameters import Hyperparameters
 
-from evodm.landscapes import Landscape
+from .core.landscapes import Landscape
 import pandas as pd
 import numpy as np
 from itertools import combinations
-from evodm.est_growth_rates import * 
+from .est_growth_rates import * 
 import pickle
 
 def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
@@ -85,7 +85,7 @@ def evol_deepmind(savepath = None, num_evols = 1, N = 5, episodes = 50,
     learning_rate: float
     """
     #initialize hyperparameters - and edit them according to the user inputs
-    hp = hyperparameters()
+    hp = Hyperparameters()
     hp.NUM_EVOLS = int(num_evols)
     hp.N = int(N)
     hp.EPISODES = int(episodes)
@@ -300,7 +300,7 @@ def mdp_mira_sweep(num_evals, episodes = 10, num_steps = 20, normalize_drugs = F
         episodes: int
             how many episodes should be evaluated per gamma parameter
     '''
-    hp = hyperparameters()
+    hp = Hyperparameters()
     hp.EPISODES = episodes
     hp.RESET_EVERY = num_steps
     hp.N = 4
@@ -351,7 +351,7 @@ def mdp_sweep(N, sigma_range = [0,2], num_drugs_max=20, episodes=10, num_steps=2
     for i in iter(sigma_range):
         for j in iter(num_drugs_range):
             #define new drug selector class for each of these scenarios
-            hp = hyperparameters()
+            hp = Hyperparameters()
             hp.EPISODES = episodes
             hp.RESET_EVERY = num_steps
             hp.N = N
@@ -426,7 +426,7 @@ def policy_sweep(episodes, normalize_drugs = False, num_steps = 20):
             how many episodes should be evaluated per policy
         normalize_drugs: bool
     '''
-    hp = hyperparameters()
+    hp = Hyperparameters()
     hp.EPISODES = episodes
     hp.RESET_EVERY = num_steps
     hp.N = 4
@@ -504,7 +504,7 @@ def count_jumps(gen_per_step = 50, pop_size=10000):
        pop_size
     Returns: pd.dataframe
     '''
-    hp_wf = hyperparameters()
+    hp_wf = Hyperparameters()
     hp_wf.WF = True
     hp_wf.EPISODES=5
     hp_wf.MIN_REPLAY_MEMORY_SIZE=50

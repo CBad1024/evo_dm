@@ -1,12 +1,12 @@
-from .learner import DrugSelector, practice
-from .hyperparameters import hyperparameters
-from .landscapes import Landscape
-from .evol_game import evol_env, generate_landscapes, normalize_landscapes, run_sim, define_mira_landscapes
+from .agents.legacy_learner import DrugSelector, practice
+from .core.hyperparameters import Hyperparameters
+from .core.landscapes import Landscape
+from .envs import evol_env, generate_landscapes, normalize_landscapes, run_sim, define_mira_landscapes
 from .exp import evol_deepmind, mdp_mira_sweep, policy_sweep, test_generic_policy, sweep_replicate_policy, mdp_sweep, signal2noise
 
 __all__ = [
     'evol_deepmind',
-    'hyperparameters', 
+    'Hyperparameters', 
     'DrugSelector', 
     'practice',
     'evol_env',

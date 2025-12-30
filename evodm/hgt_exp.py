@@ -1,6 +1,6 @@
-from evodm.landscapes import Landscape
-from evodm.evol_game import evol_env_wf, generate_landscapes, normalize_landscapes
-from evodm.data import get_example_drug
+from .core.landscapes import Landscape
+from .envs import evol_env_wf, generate_landscapes, normalize_landscapes
+from .utils.data import get_example_drug
 import pandas as pd
 import numpy as np
 

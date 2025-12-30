@@ -1,8 +1,4 @@
-from .envs import (
-    evol_env,
-    evol_env_wf,
-    SSWMEnv,
-    WrightFisherEnv,
+from .helpers import (
     generate_landscapes,
     normalize_landscapes,
     run_sim,
@@ -13,12 +9,11 @@ from .envs import (
     s_solve,
     fast_choice
 )
+from .sswm_env import SSWMEnv
+from .wright_fisher_env import WrightFisherEnv
+from .legacy_env import evol_env, evol_env_wf
 
 __all__ = [
-    'evol_env',
-    'evol_env_wf',
-    'SSWMEnv',
-    'WrightFisherEnv',
     'generate_landscapes',
     'normalize_landscapes',
     'run_sim',
@@ -27,5 +22,9 @@ __all__ = [
     'define_successful_landscapes',
     'discretize_state',
     's_solve',
-    'fast_choice'
+    'fast_choice',
+    'SSWMEnv',
+    'WrightFisherEnv',
+    'evol_env',
+    'evol_env_wf'
 ]
