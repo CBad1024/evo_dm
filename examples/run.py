@@ -1,3 +1,4 @@
+import argparse
 import builtins
 import datetime as dt
 import logging
@@ -5,8 +6,11 @@ import sys
 from pathlib import Path
 
 # Add parent directory to path to import from local source instead of installed package
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
+
+# Ensure log directory exists
+(project_root / "log").mkdir(parents=True, exist_ok=True)
 
 import numpy as np
 import pandas as pd
@@ -28,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f"mira_mdp_{timestamp}.log"),
+        logging.FileHandler(project_root / "log" / f"mira_mdp_{timestamp}.log"),
         logging.StreamHandler()
     ]
 )
@@ -47,8 +51,9 @@ def mira_env():
     """Initializes the MDP environment and a simulation environment."""
     drugs = define_mira_landscapes()
 
+    v_sigma = hp_args.sigma if hp_args else 0.5
     # The dp_env is for solving the MDP
-    envdp = dp_env(N=4, num_drugs=15, drugs=drugs, sigma=0.5)
+    envdp = dp_env(N=4, num_drugs=15, drugs=drugs, sigma=v_sigma)
     # The evol_env is for simulating policies
     env = evol_env(N=4, drugs=drugs, num_drugs=15, normalize_drugs=False,
                    train_input='fitness')
@@ -112,7 +117,7 @@ def get_sequences(policy, env, num_episodes=10, episode_length=20, finite_horizo
     return results_df
 
 
-def main(mdp=False, rl=False, wf_test=False, wf_train=False, wf_seascapes=False):
+def main(mdp=False, rl=False, wf_test=False, wf_train=False, wf_seascapes=False, signature=None, filename=None, hp_args=None):
     """
     Main function to solve the MIRA MDP and evaluate the policies.
     """
@@ -123,9 +128,9 @@ def main(mdp=False, rl=False, wf_test=False, wf_train=False, wf_seascapes=False)
     if mdp:
         run_mdp(envdp, env)
     if rl:
-        run_rl(env, envdp)
+        run_rl(env, envdp, hp_args=hp_args)
     if wf_test:
-        run_wright_fisher(train=wf_train, seascapes=wf_seascapes)
+        run_wright_fisher(train=wf_train, seascapes=wf_seascapes, signature=signature, filename=filename, hp_args=hp_args)
 
 
 def run_sim_seascape(policy, drugs, num_episodes=50, episode_length=20):
@@ -216,7 +221,7 @@ def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20
     return results_df
 
 
-def run_wright_fisher(train: bool, seascapes: bool = False):
+def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = None, filename: str = None):
     if seascapes:
         p = Presets.p1_ss()
     else:
@@ -227,14 +232,23 @@ def run_wright_fisher(train: bool, seascapes: bool = False):
             print("Seascapes enabled")
 
         print("Training Wright Fisher...")
-        train_wf_landscapes(p=p, seascapes=seascapes)
+        train_wf_landscapes(p=p, seascapes=seascapes, signature=signature)
 
-    filename = "best_policy_ss.pth" if seascapes else "best_policy.pth"
+    if filename is None:
+        filename = "best_policy_ss.pth" if seascapes else "best_policy.pth"
+        if signature:
+            filename = f"{Path(filename).stem}_{signature}.pth"
 
-    print(filename)
+    print(f"Using policy file: {filename}")
 
-    best_policy = load_best_policy(p, filename=filename)
-    env = WrightFisherEnv(seascapes=seascapes)
+    best_policy = load_best_policy(p, filename=filename, env_type="wf")
+    env = WrightFisherEnv(seascapes=seascapes, N=hp_args.n_mut if hp_args else 4)
+    # Update env with WF specific parameters
+    if hp_args:
+        env.pop_size = hp_args.pop_size
+        env.mutation_rate = hp_args.mutation_rate
+        env.gen_per_step = hp_args.gen_per_step
+
     if not seascapes:
         results_df = run_sim_tianshou(env=env, policy=best_policy, drugs=define_mira_landscapes())
     else:
@@ -331,12 +345,12 @@ def run_mdp(envdp, env):
     print("\nAverage fitness under PI policy:", pi_results['fitness'].mean())
 
 
-def run_rl(env, envdp):
-    v_N = 4
+def run_rl(env, envdp, hp_args=None):
+    v_N = hp_args.n_mut if hp_args else 4
     v_mira = True
     v_drugs = 15
-    num_episodes = 350
-    batch_size = 256
+    num_episodes = hp_args.epochs if hp_args else 350
+    batch_size = hp_args.batch_size if hp_args else 256
 
     hp = Hyperparameters()
 
@@ -349,15 +363,15 @@ def run_rl(env, envdp):
         reset_every=20, min_epsilon=0.005,
         train_input="state_vector", random_start=False,
         noise=False, noise_modifier=1, num_drugs=v_drugs,
-        sigma=0.5, normalize_drugs=True,
+        sigma=hp_args.sigma if hp_args else 0.5, normalize_drugs=True,
         player_wcutoff=-1, pop_wcutoff=2, win_threshold=200,
         win_reward=1, standard_practice=False, drugs=None,
         average_outcomes=False, mira=v_mira, gamma=0.99,
-        learning_rate=0.0001, minibatch_size=batch_size,
+        learning_rate=hp_args.lr if hp_args else 0.0001, minibatch_size=batch_size,
         pre_trained=False, wf=False,
-        mutation_rate=1e-5,
-        gen_per_step=500,
-        pop_size=10000,
+        mutation_rate=hp_args.mutation_rate if hp_args else 1e-5,
+        gen_per_step=hp_args.gen_per_step if hp_args else 500,
+        pop_size=hp_args.pop_size if hp_args else 10000,
         agent="none",
         update_target_every=310, total_resistance=False,
         starting_genotype=0, train_freq=1,
@@ -405,25 +419,44 @@ def main_mdp():
     main(mdp=True)
 
 
-def main_sswm():
-    main(rl=True)
+def main_sswm(hp_args=None):
+    main(rl=True, hp_args=hp_args)
 
 
-def main_wf_landscapes(train):
-    main(wf_test=True, wf_train=train)
+def main_wf_landscapes(train, signature=None, filename=None, hp_args=None):
+    main(wf_test=True, wf_train=train, signature=signature, filename=filename, hp_args=hp_args)
 
 
-def main_wf_seascapes(train):
-    main(wf_test=True, wf_train=train, wf_seascapes=True)
+def main_wf_seascapes(train, signature=None, filename=None, hp_args=None):
+    main(wf_test=True, wf_train=train, wf_seascapes=True, signature=signature, filename=filename, hp_args=hp_args)
 
-def main_simple_sswm(train = True):
-    p = Presets.p2_ls()
+
+def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
+    p_base = Presets.p2_ls()
+    
+    # Override defaults with hp_args if provided
+    p = p_base
+    if hp_args:
+        p = Presets(
+            state_shape=2**hp_args.n_mut,
+            num_actions=p_base.num_actions,
+            lr=hp_args.lr or p_base.lr,
+            epochs=hp_args.epochs or p_base.epochs,
+            train_steps_per_epoch=p_base.train_steps_per_epoch,
+            test_episodes=p_base.test_episodes,
+            batch_size=hp_args.batch_size or p_base.batch_size,
+            buffer_size=p_base.buffer_size
+        )
 
     if train:
-        train_sswm_landscapes(p)
+        train_sswm_landscapes(p, signature=signature)
 
-    filename = "best_policy_sswm.pth"
-    best_policy : DQNPolicy = load_best_policy(p, filename=filename)
+    if filename is None:
+        filename = "best_policy_sswm.pth"
+        if signature:
+            filename = f"best_policy_sswm_{signature}.pth"
+
+    best_policy : DQNPolicy = load_best_policy(p, filename=filename, env_type="sswm")
     env = SSWMEnv()
     results_df = run_sim_tianshou(env = env, policy=best_policy, num_episodes=10, episode_length=20)
 
@@ -463,10 +496,34 @@ def main_simple_sswm(train = True):
 
 
 if __name__ == "__main__":
-    main_simple_sswm(train = True)
-    # main_mdp()
-    # main_sswm()
-    # main_wf_landscapes(train = True)
-    # main_wf_seascapes(train = True)
-    # main_wf_landscapes(train = False)
-    # main_wf_seascapes(train = False)
+    parser = argparse.ArgumentParser(description="EvoDM Runner")
+    parser.add_argument("--mode", type=str, choices=["mdp", "sswm", "wf_ls", "wf_ss", "simple_sswm"], default="simple_sswm")
+    parser.add_argument("--train", action="store_true", help="Train before evaluation")
+    parser.add_argument("--no-train", action="store_false", dest="train", help="Skip training (only evaluation)")
+    parser.add_argument("--signature", type=str, default=None, help="Signature to append to the policy filename during training")
+    parser.add_argument("--filename", type=str, default=None, help="Explicit policy filename to use during evaluation")
+    
+    # Hyperparameters
+    parser.add_argument("--lr", type=float, default=None, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=None, help="Number of epochs/episodes")
+    parser.add_argument("--batch-size", type=int, default=None, help="Minibatch size")
+    parser.add_argument("--n-mut", type=int, default=4, help="Number of mutations (N)")
+    parser.add_argument("--sigma", type=float, default=0.5, help="Sigma for landscapes")
+    parser.add_argument("--pop-size", type=int, default=10000, help="Population size (for WF)")
+    parser.add_argument("--mutation-rate", type=float, default=1e-5, help="Mutation rate (for WF)")
+    parser.add_argument("--gen-per-step", type=int, default=500, help="Generations per step (for WF)")
+    
+    parser.set_defaults(train=True)
+    
+    args = parser.parse_args()
+    
+    if args.mode == "mdp":
+        main_mdp()
+    elif args.mode == "sswm":
+        main_sswm(hp_args=args)
+    elif args.mode == "wf_ls":
+        main_wf_landscapes(train=args.train, signature=args.signature, filename=args.filename, hp_args=args)
+    elif args.mode == "wf_ss":
+        main_wf_seascapes(train=args.train, signature=args.signature, filename=args.filename, hp_args=args)
+    elif args.mode == "simple_sswm":
+        main_simple_sswm(train=args.train, signature=args.signature, filename=args.filename, hp_args=args)

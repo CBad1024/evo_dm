@@ -5,16 +5,17 @@ from tianshou.env import DummyVectorEnv
 from .helpers import define_mira_landscapes
 
 class SSWMEnv(gym.Env):
-    def __init__(self, N = 2, switch_interval = 25, total_generations = 1000):
+    def __init__(self, N = 2, switch_interval = 25, total_generations = 40):
         super(SSWMEnv, self).__init__()
         self.N = N
+        self.total_generations = total_generations
         # self.seascapes = seascapes
 
         self.landscapes = define_mira_landscapes()[:8, :4] #this is an 8-drug, 4-state system
 
         self.num_drugs = len(self.landscapes)
 
-        self.observation_space = spaces.Discrete(2**self.N)  # 2^N states
+        self.observation_space = spaces.Box(low=0, high=1, shape=(2**self.N,), dtype=np.float32)
         self.action_space = spaces.Discrete(self.num_drugs)
 
         self.state = 0
@@ -51,6 +52,7 @@ class SSWMEnv(gym.Env):
         # Update the state based on the action
         self.state = self.get_next_state(fitness_landscape, self.state)
 
+        self.generation += 1
         obs = np.zeros(2**self.N)
         obs[self.state] = 1  # One-hot encoding of the current state
 
@@ -59,7 +61,7 @@ class SSWMEnv(gym.Env):
 
 
         truncated = False
-        terminated = True
+        terminated = self.generation >= self.total_generations
 
         info = {"fitness": fitness_landscape[self.state]}
         return obs, reward, terminated, truncated, info
