@@ -19,6 +19,25 @@ from ..envs import WrightFisherEnv, SSWMEnv
 from ..core.hyperparameters import Presets as P
 
 import numpy as np
+import torch.nn as nn
+
+def get_activation(activation_name: str | None) -> type[nn.Module] | None:
+    if not activation_name:
+        return nn.ReLU
+    
+    activation_name = activation_name.lower()
+    mapping = {
+        "relu": nn.ReLU,
+        "leaky_relu": nn.LeakyReLU,
+        "leakyrelu": nn.LeakyReLU,
+        "tanh": nn.Tanh,
+        "sigmoid": nn.Sigmoid,
+        "swish": nn.SiLU,
+        "silu": nn.SiLU,
+        "elu": nn.ELU,
+        "gelu": nn.GELU,
+    }
+    return mapping.get(activation_name, nn.ReLU)
 
 # Resolve PROJECT_ROOT relative to this file's location (evodm/agents/tianshou_agent.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -143,8 +162,9 @@ def load_random_policy(p: P):
 def train_sswm_landscapes(p: P, signature: str = None):
     # Calculate N from Presets.state_shape
     v_N = int(np.log2(p.state_shape))
-    # Enable randomized starts for training to improve coverage
-    train_envs, test_envs = SSWMEnv.getEnv(4, 2, N=v_N, random_start=True)
+    # Train with random start (to learn Q-values globally), Test with fixed start (to evaluate target task)
+    train_envs, _ = SSWMEnv.getEnv(4, 1, N=v_N, random_start=True)
+    _, test_envs = SSWMEnv.getEnv(1, 2, N=v_N, random_start=False)
     policy = get_dqn_policy(p, train_envs)
 
     # Use a closure to capture the signature for the save callback
@@ -158,7 +178,7 @@ def train_sswm_landscapes(p: P, signature: str = None):
         torch.save(policy.state_dict(), os.path.join(log_path_sswm, filename))
         print(f"Best policy saved to: {os.path.join(log_path_sswm, filename)}")
 
-    train_collector = Collector(policy, train_envs, PrioritizedVectorReplayBuffer(p.buffer_size, 4, alpha=0.6, beta=0.4))
+    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
     test_collector = Collector(policy, test_envs)
 
     metrics_logger = MetricsLogger(signature if signature else "last_sswm")
@@ -177,12 +197,22 @@ def train_sswm_landscapes(p: P, signature: str = None):
             mira_data = define_mira_landscapes()
             log_policy_snapshot(signature if signature else "last_sswm", policy, 2**v_N, epoch=epoch, metrics_logger=metrics_logger, mira_data=mira_data)
 
-    # Epsilon: constant 0.95 for first 10 epochs, then decay
+    # Dynamic Epsilon Schedule
+    # Explore for first 40% of training, then decay linearly to 0.05
+    start_decay = int(p.epochs * 0.4)
+    end_decay = int(p.epochs * 0.9)
+    
     def train_fn(epoch, env_step):
-        if epoch < 10:
-            eps = 0.95
+        # Tianshou epoch is 1-indexed
+        if epoch <= start_decay:
+            eps = 1.0 # Full exploration
+        elif epoch > end_decay:
+            eps = 0.05 # Minimum epsilon
         else:
-            eps = max(0.05, 0.95 ** (epoch - 10))
+            # Linear decay
+            progress = (epoch - start_decay) / (end_decay - start_decay)
+            eps = 1.0 - progress * (1.0 - 0.05)
+            
         policy.set_eps(eps)
         
         # Capture loss if available from recent training
@@ -200,11 +230,22 @@ def train_sswm_landscapes(p: P, signature: str = None):
         def __getattr__(self, name):
             return getattr(self.base_logger, name)
         
-        def log_train_data(self, collect_result, step):
-            # Capture loss if available
-            if hasattr(collect_result, 'losses') and hasattr(collect_result.losses, 'loss'):
-                self.last_loss[0] = float(collect_result.losses.loss)
-            return self.base_logger.log_train_data(collect_result, step)
+        def log_update_data(self, update_result, step):
+            # DQN/OffpolicyTrainer exposes loss through log_update_data
+            # update_result can be a dict or an object depending on Tianshou version
+            loss = None
+            if isinstance(update_result, dict):
+                 loss = update_result.get('loss')
+            elif hasattr(update_result, 'loss'):
+                 loss = update_result.loss
+            
+            if loss is not None:
+                try:
+                     self.last_loss[0] = float(loss)
+                except:
+                     pass
+
+            return self.base_logger.log_update_data(update_result, step)
     
     wrapped_logger = LossCapturingLogger(logger, last_loss)
 
@@ -308,10 +349,13 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
         # Model and optimizer
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # action_space = train_envs.get_env_attr("action_space")[0]
+        
+        activation = get_activation(p.activation)
 
         net = Net(
             state_shape=p.state_shape,
             hidden_sizes=[128, 128],
+            activation=activation,
             device=device
         )
         actor = Actor(
@@ -321,7 +365,7 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
             device=device
         ).to(device)
         critic = Critic(
-            preprocess_net=Net(state_shape=p.state_shape, hidden_sizes=[128, 128], device=device),
+            preprocess_net=Net(state_shape=p.state_shape, hidden_sizes=[128, 128], activation=activation, device=device),
             hidden_sizes=[],
             device=device
         ).to(device)
@@ -362,10 +406,12 @@ def get_dqn_policy(p: P, train_envs: DummyVectorEnv):
     def init_dqn_agent():
         # Model and optimizer
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        activation = get_activation(p.activation)
         net = Net(
             state_shape=p.state_shape,
             action_shape=p.num_actions,
             hidden_sizes=[128, 128],
+            activation=activation,
             device=device
         )
         return net
@@ -378,7 +424,7 @@ def get_dqn_policy(p: P, train_envs: DummyVectorEnv):
         optim=optim,
         action_space=train_envs.get_env_attr("action_space")[0],
         discount_factor=0.99,
-        estimation_step=5,
+        estimation_step=3,
         target_update_freq=p.batch_size * 10,
     )
     print("Policy Action Space: ", policy.action_space)

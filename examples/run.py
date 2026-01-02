@@ -90,7 +90,7 @@ def log_policy_snapshot(signature, policy, env):
 
 
 
-def mira_env():
+def mira_env(hp_args=None):
     """Initializes the MDP environment and a simulation environment."""
     drugs = define_mira_landscapes()
 
@@ -165,7 +165,7 @@ def main(mdp=False, rl=False, wf_test=False, wf_train=False, wf_seascapes=False,
     Main function to solve the MIRA MDP and evaluate the policies.
     """
     print("Initializing MIRA environments (DP and Simulation)...")
-    envdp, env = mira_env()  # Removed naive_learner_env from unpack
+    envdp, env = mira_env(hp_args=hp_args)  # Removed naive_learner_env from unpack
     # result = mira_env()
     # print(":: MIRA ENV ", result)
     if mdp:
@@ -491,7 +491,8 @@ def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
             train_steps_per_epoch=p_base.train_steps_per_epoch,
             test_episodes=p_base.test_episodes,
             batch_size=hp_args.batch_size or p_base.batch_size,
-            buffer_size=p_base.buffer_size
+            buffer_size=p_base.buffer_size,
+            activation=hp_args.activation or p_base.activation
         )
 
     if train:
@@ -558,6 +559,7 @@ if __name__ == "__main__":
     parser.add_argument("--pop-size", type=int, default=10000, help="Population size (for WF)")
     parser.add_argument("--mutation-rate", type=float, default=1e-5, help="Mutation rate (for WF)")
     parser.add_argument("--gen-per-step", type=int, default=500, help="Generations per step (for WF)")
+    parser.add_argument("--activation", type=str, default=None, help="Activation function (relu, tanh, sigmoid, swish, etc.)")
     
     parser.set_defaults(train=True)
     

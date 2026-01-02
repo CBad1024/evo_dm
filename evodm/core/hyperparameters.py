@@ -94,23 +94,24 @@ class Presets:
     test_episodes : int
     batch_size : int
     buffer_size : int
+    activation : str | None = "relu"
 
     @staticmethod
     def p1_ss() :
-        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=2048)
+        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=2048, activation="relu")
 
     @staticmethod
     def p1_test() :
-        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=20000)
+        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=20000, activation="relu")
 
     @staticmethod
     def p1_ls():
-        return Presets(state_shape = 16, num_actions = 10, lr=3e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=2048)
+        return Presets(state_shape = 16, num_actions = 10, lr=3e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=2048, activation="relu")
 
     @staticmethod
     def p2_ls():
-        return Presets(state_shape = 4, num_actions = 15, lr=1e-4, epochs=5, train_steps_per_epoch=5000, test_episodes=10, batch_size=128, buffer_size=20480)
+        return Presets(state_shape = 4, num_actions = 15, lr=1e-5, epochs=5, train_steps_per_epoch=5000, test_episodes=10, batch_size=128, buffer_size=20480, activation="relu")
 
     @staticmethod
     def p2_test() :
-        return Presets(state_shape = 4, num_actions = 15, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=32, buffer_size=2048)
+        return Presets(state_shape = 4, num_actions = 15, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=32, buffer_size=2048, activation="relu")
