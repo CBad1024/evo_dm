@@ -457,7 +457,7 @@ def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
             filename = f"best_policy_sswm_{signature}.pth"
 
     best_policy : DQNPolicy = load_best_policy(p, filename=filename, env_type="sswm")
-    env = SSWMEnv()
+    env = SSWMEnv(N=hp_args.n_mut if hp_args else 2)
     results_df = run_sim_tianshou(env = env, policy=best_policy, num_episodes=10, episode_length=20)
 
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])

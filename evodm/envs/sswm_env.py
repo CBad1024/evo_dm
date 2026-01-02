@@ -5,13 +5,16 @@ from tianshou.env import DummyVectorEnv
 from .helpers import define_mira_landscapes
 
 class SSWMEnv(gym.Env):
-    def __init__(self, N = 2, switch_interval = 25, total_generations = 40):
+    def __init__(self, N = 2, switch_interval = 25, total_generations = 40, random_start = False):
         super(SSWMEnv, self).__init__()
         self.N = N
         self.total_generations = total_generations
-        # self.seascapes = seascapes
+        self.random_start = random_start
 
-        self.landscapes = define_mira_landscapes()[:8, :4] #this is an 8-drug, 4-state system
+        # Slice landscapes for 2^N genotypes (e.g., 4 drugs, 2^N states)
+        # Mira has 15 drugs and 16 genotypes (N=4)
+        mira = define_mira_landscapes()
+        self.landscapes = mira[:, :2**self.N] 
 
         self.num_drugs = len(self.landscapes)
 
@@ -24,8 +27,12 @@ class SSWMEnv(gym.Env):
         self.reset()
 
 
-    def reset(self):
-        self.state = 0
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        if hasattr(self, 'random_start') and self.random_start:
+            self.state = np.random.randint(0, 2**self.N)
+        else:
+            self.state = 0
         self.current_drug = 0
         self.generation = 0
         obs = np.zeros(2 ** self.N)
@@ -67,9 +74,9 @@ class SSWMEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     @staticmethod
-    def getEnv(n_train, n_test):
+    def getEnv(n_train, n_test, N=2, random_start=False):
         def make_env():
-            return SSWMEnv(N=2)
+            return SSWMEnv(N=N, random_start=random_start)
         train_envs = DummyVectorEnv([make_env for _ in range(n_train)])
         test_envs = DummyVectorEnv([make_env for _ in range(n_test)])
         return train_envs, test_envs

@@ -17,14 +17,31 @@ from torch.utils.tensorboard import SummaryWriter
 from ..envs import WrightFisherEnv, SSWMEnv
 from ..core.hyperparameters import Presets as P
 
+import numpy as np
+
 # Resolve PROJECT_ROOT relative to this file's location (evodm/agents/tianshou_agent.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Logger for tensorboard
 log_path = os.path.join(PROJECT_ROOT, "log", "RL")
+metrics_path = os.path.join(PROJECT_ROOT, "log", "metrics")
 os.makedirs(log_path, exist_ok=True)
+os.makedirs(metrics_path, exist_ok=True)
 writer = SummaryWriter(log_path)
 logger = TensorboardLogger(writer)
+
+class MetricsLogger:
+    def __init__(self, signature):
+        self.signature = signature
+        self.filename = os.path.join(metrics_path, f"{signature}.csv") if signature else None
+        if self.filename:
+            with open(self.filename, "w") as f:
+                f.write("epoch,mean_reward,std_reward\n")
+
+    def log(self, epoch, mean_reward, std_reward):
+        if self.filename:
+            with open(self.filename, "a") as f:
+                f.write(f"{epoch},{mean_reward},{std_reward}\n")
 
 seascapes_run = False
 non_seascape_policy = "best_policy.pth"
@@ -41,7 +58,11 @@ def load_best_policy(p: P, filename: str = non_seascape_policy, ppo: bool = Fals
         train_envs, test_envs = WrightFisherEnv.getEnv(4, 2, seascapes_run)
         current_log_path = log_path
     elif env_type == "sswm":
-        train_envs, test_envs = SSWMEnv.getEnv(4, 2)
+        # Calculate N from p.state_shape if possible, else assume N=4 for load (MIRA logic)
+        # However, for consistency we should pass it or derive it.
+        # p.state_shape = 2**N
+        v_N = int(np.log2(p.state_shape)) if p.state_shape > 0 else 4
+        train_envs, test_envs = SSWMEnv.getEnv(4, 2, N=v_N)
         current_log_path = os.path.join(PROJECT_ROOT, "log", "sswm_dqn")
     else:
         raise ValueError(f"Unknown env_type: {env_type}")
@@ -63,7 +84,10 @@ def load_random_policy(p: P):
 
 
 def train_sswm_landscapes(p: P, signature: str = None):
-    train_envs, test_envs = SSWMEnv.getEnv(4, 2)
+    # Calculate N from Presets.state_shape
+    v_N = int(np.log2(p.state_shape))
+    # Enable randomized starts for training to improve coverage
+    train_envs, test_envs = SSWMEnv.getEnv(4, 2, N=v_N, random_start=True)
     policy = get_dqn_policy(p, train_envs)
 
     # Use a closure to capture the signature for the save callback
@@ -80,6 +104,19 @@ def train_sswm_landscapes(p: P, signature: str = None):
     train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
     test_collector = Collector(policy, test_envs)
 
+    metrics_logger = MetricsLogger(signature if signature else "last_sswm")
+
+    def test_fn(epoch, env_step):
+        if test_collector:
+            stats = test_collector.collect(n_episode=p.test_episodes)
+            if stats.returns_stat:
+                metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std)
+
+    # Epsilon decay from 0.5 to 0.05
+    def train_fn(epoch, env_step):
+        eps = max(0.05, 0.5 * (0.9 ** epoch))
+        policy.set_eps(eps)
+
     drug_trainer = OffpolicyTrainer(
         policy=policy,
         max_epoch=p.epochs,
@@ -91,6 +128,8 @@ def train_sswm_landscapes(p: P, signature: str = None):
         step_per_epoch=p.train_steps_per_epoch,
         save_best_fn=save_best_v2,
         logger=logger,
+        test_fn=test_fn,
+        train_fn=train_fn
     )
     result = drug_trainer.run()
 
@@ -137,6 +176,13 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
     train_collector.collect(n_step=p.batch_size * 10)
 
     print(f"Max epochs set to: {p.epochs}")
+    metrics_logger = MetricsLogger(signature if signature else ("wf_ss" if seascapes else "wf_ls"))
+    def test_fn(epoch, env_step):
+        if test_collector:
+            stats = test_collector.collect(n_episode=p.test_episodes)
+            if stats.returns_stat:
+                metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std)
+
     # Training
     drug_trainer = OnpolicyTrainer(
         policy=policy,
@@ -149,11 +195,10 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
         episode_per_test=p.test_episodes,
         step_per_collect=p.batch_size * 10,
         train_fn=lambda epoch, env_step: None,
-        test_fn=lambda epoch, env_step: None,
+        test_fn=test_fn,
         stop_fn=lambda mean_rewards: None,  # changed from mean rewards >= -1
         save_best_fn=save_best_v2,  # ✅ save best model
         logger=logger,
-
     )
     result = drug_trainer.run()
 
@@ -239,7 +284,7 @@ def get_dqn_policy(p: P, train_envs: DummyVectorEnv):
         optim=optim,
         action_space=train_envs.get_env_attr("action_space")[0],
         discount_factor=0.99,
-        estimation_step=2,
+        estimation_step=5,
         target_update_freq=p.batch_size * 10,
     )
     print("Policy Action Space: ", policy.action_space)
