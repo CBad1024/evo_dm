@@ -4,7 +4,7 @@ import pickle
 import torch
 from pathlib import Path
 from keras.optimizers import Adam
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import Collector, VectorReplayBuffer, PrioritizedVectorReplayBuffer
 from tianshou.env import DummyVectorEnv
 from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
 from tianshou.trainer import OnpolicyTrainer, OffpolicyTrainer
@@ -13,6 +13,7 @@ from tianshou.utils.net.common import Net
 from tianshou.utils.net.discrete import Actor, Critic
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
+import json
 
 from ..envs import WrightFisherEnv, SSWMEnv
 from ..core.hyperparameters import Presets as P
@@ -34,14 +35,70 @@ class MetricsLogger:
     def __init__(self, signature):
         self.signature = signature
         self.filename = os.path.join(metrics_path, f"{signature}.csv") if signature else None
+        self.corr_filename = os.path.join(metrics_path, f"{signature}_correlation.csv") if signature else None
         if self.filename:
             with open(self.filename, "w") as f:
-                f.write("epoch,mean_reward,std_reward\n")
+                f.write("epoch,mean_reward,std_reward,loss\n")
+        if self.corr_filename:
+            with open(self.corr_filename, "w") as f:
+                f.write("epoch,correlation,p_value\n")
 
-    def log(self, epoch, mean_reward, std_reward):
+    def log(self, epoch, mean_reward, std_reward, loss=None):
         if self.filename:
             with open(self.filename, "a") as f:
-                f.write(f"{epoch},{mean_reward},{std_reward}\n")
+                loss_str = f",{loss}" if loss is not None else ","
+                f.write(f"{epoch},{mean_reward},{std_reward}{loss_str}\n")
+    
+    def log_correlation(self, epoch, correlation, p_value):
+        if self.corr_filename:
+            with open(self.corr_filename, "a") as f:
+                f.write(f"{epoch},{correlation},{p_value}\n")
+
+
+def log_policy_snapshot(signature, policy, n_states, epoch=None, metrics_logger=None, mira_data=None):
+    if not signature:
+        return
+    log_dir = os.path.join(PROJECT_ROOT, "log", "policies")
+    os.makedirs(log_dir, exist_ok=True)
+    filename = os.path.join(log_dir, f"{signature}_live.json")
+    
+    state_tensor = torch.FloatTensor(np.identity(n_states))
+    
+    with torch.no_grad():
+        if hasattr(policy, "model"): # DQN
+            model_out = policy.model(state_tensor)
+            if isinstance(model_out, tuple): # Some models return (logits, state)
+                model_out = model_out[0]
+            q_values = model_out.cpu().numpy().tolist()
+        elif hasattr(policy, "actor"): # PPO
+            # For PPO, we can log the action probabilities
+            # This is a bit more complex, but we can log the logits
+            actor_out = policy.actor(state_tensor)
+            if isinstance(actor_out, tuple):
+                actor_out = actor_out[0]
+            q_values = actor_out.cpu().numpy().tolist()
+        else:
+            return
+    
+    # If MIRA data is provided and epoch tracking is enabled, calculate correlation
+    if epoch is not None and metrics_logger is not None and mira_data is not None:
+        try:
+            from scipy.stats import pearsonr
+            q_array = np.array(q_values)
+            mira_landscape = mira_data.T  # Transpose to match Q orientation
+            correlation, p_value = pearsonr(q_array.flatten(), mira_landscape.flatten())
+            metrics_logger.log_correlation(epoch, correlation, p_value)
+        except Exception as e:
+            pass  # Silently fail if correlation can't be computed
+            
+    snapshot = {
+        "n_states": n_states,
+        "q_values": q_values # Reusing key name for simplicity in UI
+    }
+    
+    with open(filename, "w") as f:
+        json.dump(snapshot, f)
+
 
 seascapes_run = False
 non_seascape_policy = "best_policy.pth"
@@ -101,21 +158,55 @@ def train_sswm_landscapes(p: P, signature: str = None):
         torch.save(policy.state_dict(), os.path.join(log_path_sswm, filename))
         print(f"Best policy saved to: {os.path.join(log_path_sswm, filename)}")
 
-    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
+    train_collector = Collector(policy, train_envs, PrioritizedVectorReplayBuffer(p.buffer_size, 4, alpha=0.6, beta=0.4))
     test_collector = Collector(policy, test_envs)
 
     metrics_logger = MetricsLogger(signature if signature else "last_sswm")
+    
+    # Track loss for visualization
+    last_loss = [None]  # Use list to allow mutation in nested function
 
     def test_fn(epoch, env_step):
         if test_collector:
             stats = test_collector.collect(n_episode=p.test_episodes)
             if stats.returns_stat:
-                metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std)
+                metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std, last_loss[0])
+            
+            # Log policy snapshot with correlation tracking
+            from ..envs import define_mira_landscapes
+            mira_data = define_mira_landscapes()
+            log_policy_snapshot(signature if signature else "last_sswm", policy, 2**v_N, epoch=epoch, metrics_logger=metrics_logger, mira_data=mira_data)
 
-    # Epsilon decay from 0.5 to 0.05
+    # Epsilon: constant 0.95 for first 10 epochs, then decay
     def train_fn(epoch, env_step):
-        eps = max(0.05, 0.5 * (0.9 ** epoch))
+        if epoch < 10:
+            eps = 0.95
+        else:
+            eps = max(0.05, 0.95 ** (epoch - 10))
         policy.set_eps(eps)
+        
+        # Capture loss if available from recent training
+        if hasattr(policy, '_rew_mean'):
+            # DQN doesn't expose loss directly, but we can get it from the logger
+            # For now, we'll leave it as None and update after trainer provides it
+            pass
+
+    # Wrap the logger to capture loss
+    class LossCapturingLogger:
+        def __init__(self, base_logger, last_loss_ref):
+            self.base_logger = base_logger
+            self.last_loss = last_loss_ref
+            
+        def __getattr__(self, name):
+            return getattr(self.base_logger, name)
+        
+        def log_train_data(self, collect_result, step):
+            # Capture loss if available
+            if hasattr(collect_result, 'losses') and hasattr(collect_result.losses, 'loss'):
+                self.last_loss[0] = float(collect_result.losses.loss)
+            return self.base_logger.log_train_data(collect_result, step)
+    
+    wrapped_logger = LossCapturingLogger(logger, last_loss)
 
     drug_trainer = OffpolicyTrainer(
         policy=policy,
@@ -127,7 +218,7 @@ def train_sswm_landscapes(p: P, signature: str = None):
         step_per_collect= p.batch_size * 10,
         step_per_epoch=p.train_steps_per_epoch,
         save_best_fn=save_best_v2,
-        logger=logger,
+        logger=wrapped_logger,
         test_fn=test_fn,
         train_fn=train_fn
     )
@@ -182,6 +273,9 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
             stats = test_collector.collect(n_episode=p.test_episodes)
             if stats.returns_stat:
                 metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std)
+            
+            # Log policy snapshot
+            log_policy_snapshot(signature if signature else ("wf_ss" if seascapes_run else "wf_ls"), policy, 16) # WF is fixed N=4 for now
 
     # Training
     drug_trainer = OnpolicyTrainer(

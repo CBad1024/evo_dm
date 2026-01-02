@@ -18,6 +18,7 @@ import torch
 from matplotlib import pyplot as plt
 from tianshou.data import Batch
 from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
+import json
 
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
 from evodm.envs import define_mira_landscapes, evol_env, WrightFisherEnv, SSWMEnv
@@ -45,6 +46,48 @@ def print(*args, **kwargs):
 
 
 builtins.print = print
+
+def log_trajectory_step(signature, episode, step, genotype, fitness, drug):
+    if not signature:
+        return
+    log_dir = project_root / "log" / "trajectories"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    filename = log_dir / f"{signature}_live.csv"
+    
+    # Write header if file doesn't exist
+    if not filename.exists():
+        with open(filename, "w") as f:
+            f.write("episode,step,genotype,fitness,drug\n")
+    
+    with open(filename, "a") as f:
+        f.write(f"{episode},{step},{genotype},{fitness},{drug}\n")
+
+def log_policy_snapshot(signature, policy, env):
+    if not signature:
+        return
+    log_dir = project_root / "log" / "policies"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    filename = log_dir / f"{signature}_live.json"
+    
+    # For DQN/Simple SSWM, we can get Q-values for all genotypes
+    # For N=4, there are 16 genotypes
+    n_states = 2**env.N
+    state_tensor = torch.FloatTensor(np.identity(n_states))
+    
+    with torch.no_grad():
+        if hasattr(policy, "model"): # DQN
+            q_values = policy.model(state_tensor).cpu().numpy().tolist()
+        else:
+            return # Policy type not supported for snapshot yet
+            
+    snapshot = {
+        "n_states": n_states,
+        "q_values": q_values
+    }
+    
+    with open(filename, "w") as f:
+        json.dump(snapshot, f)
+
 
 
 def mira_env():
@@ -179,7 +222,7 @@ def run_sim_seascape(policy, drugs, num_episodes=50, episode_length=20):
     return results_df
 
 
-def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20):
+def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20, signature=None):
     """
     Simulates the environment for a number of episodes using a given policy.
 
@@ -215,6 +258,9 @@ def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20
             fitnesses.append(env.get_fitness())
             time_steps.append(j)
             episodes.append(i)
+            
+            # Real-time trajectory logging
+            log_trajectory_step(signature, i, j, int(np.argmax(obs)), env.get_fitness(), int(action))
 
     results_df = pd.DataFrame(
         {"Episode": episodes, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
@@ -250,10 +296,10 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
         env.gen_per_step = hp_args.gen_per_step
 
     if not seascapes:
-        results_df = run_sim_tianshou(env=env, policy=best_policy, drugs=define_mira_landscapes())
+        results_df = run_sim_tianshou(env=env, policy=best_policy, num_episodes=10, episode_length=20, signature=signature)
     else:
 
-        results_df = run_sim_tianshou(env=env, policy=best_policy, drugs=env.drug_seascapes)
+        results_df = run_sim_tianshou(env=env, policy=best_policy, num_episodes=10, episode_length=20, signature=signature)
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
 
     print("\nAverage WF fitness: ", np.mean(results_df["Fitness"]))
@@ -458,7 +504,7 @@ def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
 
     best_policy : DQNPolicy = load_best_policy(p, filename=filename, env_type="sswm")
     env = SSWMEnv(N=hp_args.n_mut if hp_args else 2)
-    results_df = run_sim_tianshou(env = env, policy=best_policy, num_episodes=10, episode_length=20)
+    results_df = run_sim_tianshou(env = env, policy=best_policy, num_episodes=10, episode_length=20, signature=signature)
 
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
 

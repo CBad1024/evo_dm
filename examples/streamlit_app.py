@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import json
 from evodm.envs import define_mira_landscapes
 
 # Add project root to sys.path
@@ -115,6 +116,14 @@ def start_simulation(tab_id):
     if sim["hp"]["dataset"] == "Mira (E. Coli)":
         cmd += ["--n-mut", "4"] # Force N=4 for Mira
     
+    # Cleanup old live files
+    signature = sim.get("signature")
+    if signature:
+        for folder in ["trajectories", "policies"]:
+            fpath = project_root / "log" / folder / f"{signature}_live.{'csv' if folder == 'trajectories' else 'json'}"
+            if fpath.exists():
+                fpath.unlink()
+
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
@@ -192,6 +201,142 @@ def plot_landscape_heatmap(tab_id):
     else:
         st.info("Synthetic landscape visualization coming soon (requires generating a sample for N={}).".format(sim["hp"]["n_mut"]))
 
+def plot_live_trajectory(tab_id):
+    sim = st.session_state.sims[tab_id]
+    signature = sim.get("signature")
+    if not signature:
+        return
+
+    traj_file = project_root / "log" / "trajectories" / f"{signature}_live.csv"
+    if traj_file.exists():
+        try:
+            df = pd.read_csv(traj_file)
+            if not df.empty:
+                st.subheader("Live Trajectory (Testing)")
+                
+                # Get the latest episode
+                latest_ep = df['episode'].max()
+                ep_df = df[df['episode'] == latest_ep]
+                
+                # Plot the path on a heatmap-like background or simple line plot
+                fig, ax = plt.subplots(figsize=(10, 3))
+                ax.plot(ep_df['step'], ep_df['genotype'], 'o-', label=f"Ep {latest_ep}")
+                ax.set_yticks(range(2**sim["hp"]["n_mut"]))
+                ax.set_yticklabels([bin(i)[2:].zfill(sim["hp"]["n_mut"]) for i in range(2**sim["hp"]["n_mut"])])
+                ax.set_xlabel("Time Step")
+                ax.set_ylabel("Genotype")
+                ax.set_title(f"Tumor Mutation Path (Mean Fitness: {np.mean(ep_df['fitness']):.4f})")
+                ax.grid(True, alpha=0.3)
+                st.pyplot(fig)
+                
+                # Also show fitness over time
+                st.line_chart(ep_df.set_index('step')['fitness'], height=150)
+        except Exception as e:
+            st.error(f"Error loading trajectory: {e}")
+
+def plot_live_policy(tab_id):
+    sim = st.session_state.sims[tab_id]
+    signature = sim.get("signature")
+    if not signature:
+        return
+
+    policy_file = project_root / "log" / "policies" / f"{signature}_live.json"
+    if not policy_file.exists():
+        return
+        
+    try:
+        with open(policy_file, "r") as f:
+            data = json.load(f)
+        
+        q_values = np.array(data["q_values"]) # Shape (n_states, n_actions)
+        
+        # Get the MIRA landscape for comparison
+        if sim["hp"]["dataset"] == "Mira (E. Coli)":
+            mira_data = define_mira_landscapes()  # Shape (15 drugs, 16 genotypes)
+            # Transpose to match Q-values orientation (genotypes x drugs)
+            mira_landscape = mira_data.T  # Now (16 genotypes, 15 drugs)
+            
+            st.subheader("Q-Value vs MIRA Landscape Comparison")
+            
+            # Calculate correlation
+            from scipy.stats import pearsonr
+            # Flatten both arrays for correlation
+            q_flat = q_values.flatten()
+            mira_flat = mira_landscape.flatten()
+            correlation, p_value = pearsonr(q_flat, mira_flat)
+            
+            # Display correlation metric prominently
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Q-MIRA Correlation", f"{correlation:.3f}")
+            with col2:
+                st.metric("P-value", f"{p_value:.2e}")
+            with col3:
+                # Interpretation
+                if abs(correlation) > 0.7:
+                    st.metric("Convergence", "Strong", delta="✓")
+                elif abs(correlation) > 0.4:
+                    st.metric("Convergence", "Moderate", delta="~")
+                else:
+                    st.metric("Convergence", "Weak", delta="✗")
+            
+            # Side-by-side heatmaps
+            fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+            
+            # MIRA Landscape
+            im1 = axes[0].imshow(mira_landscape.T, aspect='auto', cmap="viridis")
+            fig.colorbar(im1, ax=axes[0], label="Fitness")
+            axes[0].set_title("True MIRA Landscape")
+            axes[0].set_xticks(range(data["n_states"]))
+            axes[0].set_xticklabels([bin(i)[2:].zfill(int(np.log2(data["n_states"]))) for i in range(data["n_states"])], rotation=45)
+            axes[0].set_ylabel("Drugs")
+            axes[0].set_xlabel("Genotypes")
+            
+            # Learned Q-values
+            im2 = axes[1].imshow(q_values.T, aspect='auto', cmap="magma")
+            fig.colorbar(im2, ax=axes[1], label="Q-Value")
+            axes[1].set_title("Learned Q-Values")
+            axes[1].set_xticks(range(data["n_states"]))
+            axes[1].set_xticklabels([bin(i)[2:].zfill(int(np.log2(data["n_states"]))) for i in range(data["n_states"])], rotation=45)
+            axes[1].set_ylabel("Actions (Drugs)")
+            axes[1].set_xlabel("Genotypes")
+            
+            # Difference map (Q - Fitness)
+            # Normalize both to 0-1 range first for fair comparison
+            mira_norm = (mira_landscape - mira_landscape.min()) / (mira_landscape.max() - mira_landscape.min())
+            q_norm = (q_values - q_values.min()) / (q_values.max() - q_values.min())
+            diff = q_norm - mira_norm
+            
+            im3 = axes[2].imshow(diff.T, aspect='auto', cmap="coolwarm", vmin=-1, vmax=1)
+            fig.colorbar(im3, ax=axes[2], label="Difference (Normalized)")
+            axes[2].set_title("Difference Map (Q - MIRA)")
+            axes[2].set_xticks(range(data["n_states"]))
+            axes[2].set_xticklabels([bin(i)[2:].zfill(int(np.log2(data["n_states"]))) for i in range(data["n_states"])], rotation=45)
+            axes[2].set_ylabel("Actions (Drugs)")
+            axes[2].set_xlabel("Genotypes")
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+            
+            st.caption("💡 High correlation means the agent is learning the true fitness structure. Divergence may indicate strategic optimization beyond immediate fitness.")
+        else:
+            # For synthetic landscapes, just show Q-values
+            st.subheader("Learned Value Landscape (Live)")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            im = ax.imshow(q_values.T, aspect='auto', cmap="magma")
+            fig.colorbar(im, ax=ax, label="Q-Value / Advantage")
+            
+            ax.set_xticks(range(data["n_states"]))
+            ax.set_xticklabels([bin(i)[2:].zfill(int(np.log2(data["n_states"]))) for i in range(data["n_states"])], rotation=45)
+            
+            ax.set_xlabel("Genotypes")
+            ax.set_ylabel("Actions (Drugs)")
+            ax.set_title("Agent's Internal Model of the Landscape")
+            st.pyplot(fig)
+    except Exception as e:
+        st.error(f"Error loading policy snapshot: {e}")
+
+
 def plot_training_progress(tab_id):
     sim = st.session_state.sims[tab_id]
     signature = sim.get("signature")
@@ -209,12 +354,16 @@ def plot_training_progress(tab_id):
         return
 
     metrics_file = project_root / "log" / "metrics" / f"{signature}.csv"
+    corr_file = project_root / "log" / "metrics" / f"{signature}_correlation.csv"
+    
+    # Rewards plot
     if metrics_file.exists():
         try:
             df = pd.read_csv(metrics_file)
             if not df.empty:
                 st.subheader("Training Progress")
-                # Prepare data for plotting
+                
+                # Reward plot
                 plot_df = pd.DataFrame({
                     "Epoch": df["epoch"],
                     "Mean Reward": df["mean_reward"],
@@ -224,6 +373,14 @@ def plot_training_progress(tab_id):
                 
                 st.line_chart(plot_df, color=["#1f77b4", "#aec7e8", "#aec7e8"])
                 st.caption("Blue: Mean Reward | Shaded: ±1 Std Dev")
+                
+                # Loss plot (if available)
+                if "loss" in df.columns and df["loss"].notna().any():
+                    st.subheader("Training Loss")
+                    loss_df = df[["epoch", "loss"]].dropna().set_index("epoch")
+                    if not loss_df.empty:
+                        st.line_chart(loss_df, color="#ff7f0e")
+                        st.caption("Orange: Training Loss (lower is better)")
             else:
                 st.info("Metrics file is empty.")
         except Exception as e:
@@ -233,6 +390,27 @@ def plot_training_progress(tab_id):
             st.info("Waiting for first training metrics...")
         else:
             st.info(f"No metrics found for signature: {signature}")
+    
+    # Correlation plot (for MIRA only)
+    if sim["hp"]["dataset"] == "Mira (E. Coli)" and corr_file.exists():
+        try:
+            corr_df = pd.read_csv(corr_file)
+            if not corr_df.empty:
+                st.subheader("Q-MIRA Correlation Over Time")
+                fig, ax = plt.subplots(figsize=(10, 3))
+                ax.plot(corr_df["epoch"], corr_df["correlation"], 'o-', color='#ff7f0e')
+                ax.axhline(y=0.7, color='g', linestyle='--', alpha=0.5, label='Strong (0.7)')
+                ax.axhline(y=0.4, color='orange', linestyle='--', alpha=0.5, label='Moderate (0.4)')
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Correlation")
+                ax.set_ylim([-1, 1])
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                st.pyplot(fig)
+                st.caption("Tracking how well Q-values align with true MIRA fitness over training")
+        except Exception as e:
+            pass  # Silently skip if correlation data isn't available yet
+
 
 @st.dialog("📜 Execution Logs", width="large")
 def show_logs(tab_id):
@@ -253,18 +431,29 @@ def render_status_logic(tab_id):
         update_logs_for_sim(tab_id)
         sim = st.session_state.sims[tab_id]
         
-        # Add the progress plot here for auto-refresh
+        # Status indicator at top
+        st.divider()
+        if sim["running"]:
+            st.success(f"🔄 Running (PID: {sim['process'].pid})")
+        elif sim["exit_code"] is not None:
+            if sim["exit_code"] == 0: st.success("✅ Finished Successfully")
+            else: st.error(f"❌ Failed (Exit Code: {sim['exit_code']})")
+        else:
+            st.info("⏸️ Idle - Configure and click RUN to start")
+        
+        st.divider()
+        
+        # Visualization Section
         if sim["train"] or sim.get("selected_policy"):
+             if sim["train"]:
+                plot_live_policy(tab_id)
+                st.divider()
              plot_training_progress(tab_id)
              st.divider()
-
-        if sim["running"]:
-            st.success(f"Running (PID: {sim['process'].pid})")
-        elif sim["exit_code"] is not None:
-            if sim["exit_code"] == 0: st.success("Finished")
-            else: st.error(f"Failed ({sim['exit_code']})")
-        else:
-            st.warning("Idle")
+             
+             if not sim["train"]:
+                plot_live_trajectory(tab_id)
+                st.divider()
     status_fragment()
 
 # Header
@@ -371,24 +560,15 @@ def render_tab_content(tab_id):
             sim["hp"]["gen_per_step"] = st.number_input("Gens per Step", 1, 10000, sim["hp"]["gen_per_step"], key=f"gps_{tab_id}")
         else:
             st.info("No specific parameters for this regime.")
-            
-        render_status_logic(tab_id)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Status indicator
+    render_status_logic(tab_id)
+    
+    # Visualizations removed from here - they're now in render_status_logic
 
-    # Visualization Area
-    st.divider()
-    col_viz, col_desc = st.columns([2, 1])
-    with col_viz:
-        st.subheader("Landscape Visualization")
-        plot_landscape_heatmap(tab_id)
-    with col_desc:
-        st.subheader("Metadata")
-        if sim["hp"]["dataset"] in DATASETS:
-            st.write(DATASETS[sim["hp"]["dataset"]]["description"])
-            dataset_N = DATASETS[sim["hp"]["dataset"]]["N"]
-            if dataset_N != "any":
-                st.metric("Required N", dataset_N)
-            else:
-                st.metric("Flexible N", "Enabled")
+
 
 for i, tab in enumerate(tabs):
     with tab:
