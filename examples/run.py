@@ -17,7 +17,7 @@ import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 from tianshou.data import Batch
-from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
+from tianshou.policy import BasePolicy
 import json
 
 from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_iteration
@@ -285,8 +285,8 @@ def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20
         for j in range(episode_length):
             states.append(obs)
 
-            batch = Batch(obs=[obs], info=Batch())
-            action = int(policy(batch).act[0])
+            batch = Batch(obs=np.array([obs]), info=Batch())
+            action = int(policy(batch).act)
 
             obs, rew, terminated, truncated, info = env.step(action)
             actions.append(int(action))

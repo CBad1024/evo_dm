@@ -1,9 +1,9 @@
 import pytest
 
-from evodm.evol_game import define_mira_landscapes
-from evodm.landscapes import *
+from evodm.envs.helpers import define_mira_landscapes
+from evodm.core.landscapes import *
 from numpy.testing import assert_array_equal
-from evodm.evol_game import WrightFisherEnv
+from evodm.envs.wright_fisher_env import WrightFisherEnv
 
 @pytest.fixture
 def ls_N3():

@@ -3,11 +3,14 @@ import pickle
 
 import torch
 from pathlib import Path
-from keras.optimizers import Adam
+# from keras.optimizers import Adam
 from tianshou.data import Collector, VectorReplayBuffer, PrioritizedVectorReplayBuffer
 from tianshou.env import DummyVectorEnv, VectorEnvWrapper
-from tianshou.policy import PPOPolicy, BasePolicy, DQNPolicy
-from tianshou.trainer import OnpolicyTrainer, OffpolicyTrainer
+from tianshou.algorithm.modelfree.ppo import PPO
+from tianshou.algorithm.modelfree.dqn import DQN, DiscreteQLearningPolicy
+from tianshou.algorithm.modelfree.reinforce import ProbabilisticActorPolicy
+from tianshou.algorithm.optim import AdamOptimizerFactory
+from tianshou.trainer import OnPolicyTrainerParams, OffPolicyTrainerParams
 from tianshou.utils import TensorboardLogger
 from tianshou.utils.net.common import Net
 from tianshou.utils.net.discrete import Actor, Critic
@@ -261,7 +264,7 @@ def train_sswm_landscapes(p: P, signature: str = None):
     policy = get_dqn_policy(p, train_envs)
 
     # Use a closure to capture the signature for the save callback
-    def save_best_v2(policy: BasePolicy):
+    def save_best_v2(policy):
         filename = "best_policy_sswm.pth"
         if signature:
             filename = f"best_policy_sswm_{signature}.pth"
@@ -271,6 +274,7 @@ def train_sswm_landscapes(p: P, signature: str = None):
         torch.save(policy.state_dict(), os.path.join(log_path_sswm, filename))
         print(f"Best policy saved to: {os.path.join(log_path_sswm, filename)}")
 
+    # Collector takes the algorithm object (policy)
     train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
     test_collector = Collector(policy, test_envs)
 
@@ -306,12 +310,15 @@ def train_sswm_landscapes(p: P, signature: str = None):
             progress = (epoch - start_decay) / (end_decay - start_decay)
             eps = 1.0 - progress * (1.0 - 0.05)
             
-        policy.set_eps(eps)
+        if hasattr(policy, "set_eps"):
+            policy.set_eps(eps)
+        elif hasattr(policy, "policy") and hasattr(policy.policy, "set_eps"):
+            policy.policy.set_eps(eps)
     
     wrapped_logger = LossCapturingLogger(logger, last_loss)
 
-    drug_trainer = OffpolicyTrainer(
-        policy=policy,
+    # In Tianshou 2.0, we use TrainerParams and run_training
+    params = OffPolicyTrainerParams(
         max_epoch=p.epochs,
         batch_size=p.batch_size,
         train_collector=train_collector,
@@ -324,7 +331,7 @@ def train_sswm_landscapes(p: P, signature: str = None):
         test_fn=test_fn,
         train_fn=train_fn
     )
-    result = drug_trainer.run()
+    result = policy.run_training(params)
 
     print(f'Drug Cycling Training finished with result: {result}')
 
@@ -398,7 +405,7 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
 
     policy = get_ppo_policy(p, train_envs)
 
-    def save_best_v2(policy: BasePolicy):
+    def save_best_v2(policy):
         global seascapes_run
         if seascapes_run:
             base_name = seascape_policy
@@ -416,9 +423,7 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
 
     # Replay buffer and collectors
     train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
-    # train_collector = AsyncCollector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
     test_collector = Collector(policy, test_envs)
-    # test_collector = AsyncCollector(policy, test_envs)
 
     # Warm-up collection
     train_collector.reset()
@@ -450,14 +455,14 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
             progress = (epoch - p.epochs * 0.3) / (p.epochs * 0.7)
             current_ent_coef = 0.05 - progress * 0.04
         
-        # Update the policy's entropy coefficient
-        policy.ent_coef = current_ent_coef
+        # Update the algorithm's entropy coefficient
+        if hasattr(policy, "ent_coef"):
+            policy.ent_coef = current_ent_coef
 
     wrapped_logger = LossCapturingLogger(logger, last_loss)
 
-    # Training
-    drug_trainer = OnpolicyTrainer(
-        policy=policy,
+    # In Tianshou 2.0, we use TrainerParams and run_training
+    params = OnPolicyTrainerParams(
         max_epoch=p.epochs,
         batch_size=p.batch_size,
         train_collector=train_collector,
@@ -472,7 +477,7 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
         save_best_fn=save_best_v2,  # ✅ save best model
         logger=wrapped_logger,
     )
-    result = drug_trainer.run()
+    result = policy.run_training(params)
 
     print(f'Drug Cycling Training finished with result: {result}')
 
@@ -485,7 +490,6 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
     def init_ppo_agent():
         # Model and optimizer
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        # action_space = train_envs.get_env_attr("action_space")[0]
         
         activation = get_activation(p.activation)
 
@@ -509,23 +513,23 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
         return actor, critic
 
     actor, critic = init_ppo_agent()
-    actor_optim = Adam(actor.parameters(), lr=p.lr)
-    # critic_optim = Adam(critic.parameters(), lr=p.lr)
 
-    # lr_scheduler_actor = LambdaLR(actor_optim, lr_lambda=lambda epoch: p.lr * (0.995 ** epoch))
-
-    policy = PPOPolicy(
+    policy = ProbabilisticActorPolicy(
         actor=actor,
-        critic=critic,
-        optim=actor_optim,
         dist_fn=torch.distributions.Categorical,
         action_space=train_envs.get_env_attr("action_space")[0],
+    )
+
+    ppo = PPO(
+        policy=policy,
+        critic=critic,
+        optim=AdamOptimizerFactory(lr=p.lr),
         discount_factor=0.99,
         max_grad_norm=0.5,
         vf_coef=0.5,
-        ent_coef=0.05,  # Moderate entropy for balanced exploration/exploitation
+        ent_coef=0.05,
         gae_lambda=0.95,
-        reward_normalization=True,  # Normalize returns to stabilize training
+        reward_normalization=True,
         action_scaling=False,
         deterministic_eval=False,
         dual_clip=None,
@@ -533,10 +537,9 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv):
         eps_clip=0.2,
         advantage_normalization=True,
         recompute_advantage=False,
-        # lr_scheduler=lr_scheduler_actor,
     )
-    print("Policy Action Space: ", policy.action_space)
-    return policy
+    print("Algorithm Action Space: ", ppo.policy.action_space)
+    return ppo
 
 
 def get_dqn_policy(p: P, train_envs: DummyVectorEnv):
@@ -554,18 +557,21 @@ def get_dqn_policy(p: P, train_envs: DummyVectorEnv):
         return net
 
     net = init_dqn_agent()
-    optim = Adam(net.parameters(), lr=p.lr)
 
-    policy = DQNPolicy(
+    policy = DiscreteQLearningPolicy(
         model=net,
-        optim=optim,
         action_space=train_envs.get_env_attr("action_space")[0],
+    )
+
+    dqn = DQN(
+        policy=policy,
+        optim=AdamOptimizerFactory(lr=p.lr),
         discount_factor=0.99,
         estimation_step=3,
         target_update_freq=p.batch_size * 10,
     )
-    print("Policy Action Space: ", policy.action_space)
-    return policy
+    print("Algorithm Action Space: ", dqn.policy.action_space)
+    return dqn
 
 
 def save_best_fn_sswm(policy: BasePolicy):
@@ -576,7 +582,7 @@ def save_best_fn_sswm(policy: BasePolicy):
 
     torch.save(policy.state_dict(), os.path.join(log_path_sswm, filename))
 
-def save_best_fn(policy: BasePolicy):
+def save_best_fn(policy):
     # Logger
     # if seascapes, then save to best_policy_ss.pth
     # if not seascapes, then save to best_policy.pth
@@ -590,13 +596,14 @@ def save_best_fn(policy: BasePolicy):
     torch.save(policy.state_dict(), os.path.join(log_path, filename))
 
 
-def load_best_fn(policy: BasePolicy, filename: str = "best_policy.pth", path: str = log_path):
+def load_best_fn(policy, filename: str = "best_policy.pth", path: str = log_path):
     full_path = os.path.join(path, filename)
     print(f"Loading best policy from: {full_path}")
     policy.load_state_dict(torch.load(full_path))
     return policy
 
-def load_best_fn_sswm(policy: BasePolicy, filename: str = "best_policy_sswm.pth"):
 
-    policy.load_state_dict(torch.load(os.path.join(log_path, filename)))
+def load_best_fn_sswm(policy, filename: str = "best_policy_sswm.pth"):
+    log_path_sswm = os.path.join(PROJECT_ROOT, "log", "sswm_dqn")
+    policy.load_state_dict(torch.load(os.path.join(log_path_sswm, filename)))
     return policy
