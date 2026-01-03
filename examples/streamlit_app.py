@@ -51,8 +51,8 @@ MODES = {
 }
 
 DATASETS = {
-    "Synthetic (NK)": {"N": "any", "description": "NK landscapes with tunable epistasis."},
-    "Mira (E. Coli)": {"N": 4, "description": "Empirical fitness landscapes from Mira et al. (2015)."}
+    "Synthetic (NK)": {"N": "any", "description": "NK landscapes with tunable epistasis.", "cli": "synthetic"},
+    "Mira (E. Coli)": {"N": 4, "description": "Empirical fitness landscapes from Mira et al. (2015).", "cli": "mira"}
 }
 
 # Initialize session state for simulations
@@ -75,7 +75,9 @@ if "sims" not in st.session_state:
                 "dataset": "Synthetic (NK)",
                 "pop_size": 10000,
                 "mutation_rate": 1e-5,
-                "gen_per_step": 500
+                "gen_per_step": 500,
+                "activation": "relu",
+                "reward_clip": False
             }
         }
 
@@ -97,7 +99,12 @@ def start_simulation(tab_id):
         "--batch-size", str(sim["hp"]["batch_size"]),
         "--n-mut", str(sim["hp"]["n_mut"]),
         "--sigma", str(sim["hp"]["sigma"]),
+        "--activation", sim["hp"]["activation"],
+        "--dataset", DATASETS[sim["hp"]["dataset"]]["cli"]
     ]
+
+    if sim["hp"].get("reward_clip", False):
+        cmd += ["--reward-clip"]
 
     # Mode-specific args
     if mode_arg in ["wf_ls", "wf_ss"]:
@@ -150,6 +157,8 @@ def start_simulation(tab_id):
 def update_logs_for_sim(tab_id):
     sim = st.session_state.sims[tab_id]
     changed = False
+    max_log_len = 20000 # Keep only last 20k chars to prevent WebSocket saturation
+    
     if sim["process"]:
         fd = sim["process"].stdout.fileno()
         try:
@@ -157,6 +166,11 @@ def update_logs_for_sim(tab_id):
                 chunk = os.read(fd, 8192)
                 if not chunk: break
                 sim["logs"] += chunk.decode('utf-8', errors='replace')
+                
+                # Truncate if too long
+                if len(sim["logs"]) > max_log_len:
+                    sim["logs"] = "... [truncated] ...\n" + sim["logs"][-max_log_len:]
+                
                 changed = True
         except (BlockingIOError, IOError):
             pass
@@ -171,6 +185,11 @@ def update_logs_for_sim(tab_id):
                     if not chunk: break
                     sim["logs"] += chunk.decode('utf-8', errors='replace')
             except: pass
+            
+            # Final truncation check
+            if len(sim["logs"]) > max_log_len:
+                sim["logs"] = "... [truncated] ...\n" + sim["logs"][-max_log_len:]
+                
             sim["logs"] += f"\n\n--- PROCESS EXITED with code {exit_code} ---\n"
             sim["process"] = None
             changed = True
@@ -415,7 +434,7 @@ def plot_training_progress(tab_id):
 @st.dialog("📜 Execution Logs", width="large")
 def show_logs(tab_id):
     # Nested fragment to update logs without closing the dialog
-    @st.fragment(run_every=1)
+    @st.fragment(run_every=2) # Reduced from 1s to 2s
     def log_viewer():
         # Update logs from process if running
         update_logs_for_sim(tab_id)
@@ -426,7 +445,7 @@ def show_logs(tab_id):
     log_viewer()
 
 def render_status_logic(tab_id):
-    @st.fragment(run_every=2)
+    @st.fragment(run_every=5) # Reduced from 2s to 5s for plotting heavy content
     def status_fragment():
         update_logs_for_sim(tab_id)
         sim = st.session_state.sims[tab_id]
@@ -482,7 +501,7 @@ def render_tab_content(tab_id):
         with cols_top[1]:
             sim["hp"]["lr"] = st.selectbox(
                 "Learning rate", 
-                [0.1, 0.01, 0.001, 0.0001, 0.00001], 
+                [0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001, 0.0000001], 
                 index=3,
                 key=f"lr_{tab_id}"
             )
@@ -553,6 +572,15 @@ def render_tab_content(tab_id):
         
         if sim["hp"]["dataset"] == "Mira (E. Coli)" and sim["hp"]["n_mut"] != 4:
             st.warning("Mira dataset is strictly for N=4. Please adjust the mutation slider.")
+            
+        sim["hp"]["activation"] = st.selectbox(
+            "Activation Function", 
+            ["relu", "tanh", "swish", "sigmoid", "leaky_relu", "elu", "gelu"], 
+            index=["relu", "tanh", "swish", "sigmoid", "leaky_relu", "elu", "gelu"].index(sim["hp"]["activation"]),
+            key=f"act_{tab_id}"
+        )
+
+        sim["hp"]["reward_clip"] = st.checkbox("Enable Reward Clipping", value=sim["hp"].get("reward_clip", False), key=f"clip_{tab_id}", help="Clip rewards to [-5, 5] for stability")
             
         if MODES[sim["mode"]] in ["wf_ls", "wf_ss"]:
             sim["hp"]["pop_size"] = st.number_input("Population Size", 100, 1000000, sim["hp"]["pop_size"], key=f"pop_{tab_id}")

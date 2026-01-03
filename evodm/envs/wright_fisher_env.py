@@ -10,23 +10,29 @@ class WrightFisherEnv(gym.Env):
     seascape_list = None
     drug_seascapes = None
 
-    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, switch_interval=25, total_generations=1000, seascapes = False, num_drugs = 10):
+    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, gen_per_step=500, total_generations=1000, seascapes = False, num_drugs = 10, seascape_list=None, random_start=False):
         super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size
         self.seq_length = seq_length
         self.mutation_rate = mutation_rate
-        self.switch_interval = switch_interval
+        self.random_start = random_start
+        self.switch_interval = gen_per_step # Use gen_per_step as the interval between actions
         self.total_generations = total_generations
         self.genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.seq_length)]
         self.seascapes = seascapes
 
         # Drug data (we want it to be same for all trials)
-        self.seascape_list = [Seascape(self.seq_length, sigma=0.5, selectivity=0.05, drug_label = i) for i in range(num_drugs)]
+        if seascape_list is not None:
+            self.seascape_list = seascape_list
+            self.num_drugs = len(seascape_list)
+        else:
+            self.num_drugs = num_drugs
+            self.seascape_list = [Seascape(self.seq_length, sigma=0.5, selectivity=0.05, drug_label = i) for i in range(self.num_drugs)]
+        
         self.drug_seascapes = np.array([seas.ss for seas in self.seascape_list])  # (drug, conc, genotype)
 
         self.concentrations = [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005]
 
-        self.num_drugs = num_drugs
         if seascapes:
             self.num_concs = len(self.seascape_list[0].concentrations)
         else:
@@ -47,7 +53,12 @@ class WrightFisherEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.pop = {'0' * self.seq_length: self.pop_size}
+        if self.random_start:
+            # Start at a random genotype
+            idx = np.random.randint(len(self.genotypes))
+            self.pop = {self.genotypes[idx]: self.pop_size}
+        else:
+            self.pop = {'0' * self.seq_length: self.pop_size}
         self.generation = 0
         self.current_drug = 0
         self.current_conc = 2 #we always rest the concentration to a medium value
@@ -60,10 +71,10 @@ class WrightFisherEnv(gym.Env):
             self.current_drug = action
             self.current_conc = 2
         else:
-            self.current_drug = action % 10 #ones digit
-            self.current_conc = int(action/10) #tens digit
+            self.current_drug = action % self.num_drugs #ones digit
+            self.current_conc = int(action/self.num_drugs) #tens digit
 
-        if self.current_drug >= 10 or self.current_conc >= 8:
+        if self.current_drug >= self.num_drugs or self.current_conc >= 8:
            raise ValueError("Current Drug: ", self.current_drug, "\nCurrent Conc: ", self.current_conc)
 
         fitness = {geno: self.drug_seascapes[self.current_drug, self.current_conc, i] for i, geno in enumerate(self.genotypes)}
@@ -78,7 +89,8 @@ class WrightFisherEnv(gym.Env):
         avg_fit = sum((self.pop.get(g, 0) / self.pop_size) * fitness[g] for g in self.genotypes)
 
         if not self.seascapes:
-            reward = np.exp(-4*avg_fit)
+            # Negative reward directly penalizes high fitness (thriving bacteria)
+            reward = -avg_fit
 
         else:
             reward = 1-avg_fit
@@ -94,7 +106,6 @@ class WrightFisherEnv(gym.Env):
         info = {'avg_fitness': avg_fit}
 
         return obs, reward, terminated, truncated, info
-
 
     def _get_obs(self):
         freqs = np.array([self.pop.get(geno, 0) for geno in self.genotypes]) / self.pop_size
@@ -140,11 +151,13 @@ class WrightFisherEnv(gym.Env):
                 self.pop[haplotype] = count
 
     @classmethod
-    def getEnv(cls, n_train, n_test, seascapes = False):
-        def make_env():
-            return WrightFisherEnv(seascapes=seascapes)
-        train_envs = DummyVectorEnv([make_env for _ in range(n_train)])
-        test_envs = DummyVectorEnv([make_env for _ in range(n_test)])
+    def getEnv(cls, n_train, n_test, seascapes = False, seascape_list = None, num_drugs = 10, gen_per_step=500, seq_length=4, random_start=False):
+        def make_env_train():
+            return WrightFisherEnv(seascapes=seascapes, seascape_list=seascape_list, num_drugs=num_drugs, gen_per_step=gen_per_step, seq_length=seq_length, random_start=random_start)
+        def make_env_test():
+            return WrightFisherEnv(seascapes=seascapes, seascape_list=seascape_list, num_drugs=num_drugs, gen_per_step=gen_per_step, seq_length=seq_length, random_start=False)
+        train_envs = DummyVectorEnv([make_env_train for _ in range(n_train)])
+        test_envs = DummyVectorEnv([make_env_test for _ in range(n_test)])
         return train_envs, test_envs
 
     def get_fitness(self):

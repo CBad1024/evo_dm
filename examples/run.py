@@ -24,7 +24,7 @@ from evodm.dpsolve import dp_env, backwards_induction, value_iteration, policy_i
 from evodm.envs import define_mira_landscapes, evol_env, WrightFisherEnv, SSWMEnv
 from evodm.exp import evol_deepmind
 from evodm.core.hyperparameters import Presets, Hyperparameters
-from evodm.core.landscapes import Seascape
+from evodm.core.landscapes import Seascape, SeascapeUtils
 from evodm.agents.tianshou_agent import load_best_policy, load_random_policy, train_wf_landscapes, train_sswm_landscapes
 
 # Set up logging
@@ -164,8 +164,8 @@ def main(mdp=False, rl=False, wf_test=False, wf_train=False, wf_seascapes=False,
     """
     Main function to solve the MIRA MDP and evaluate the policies.
     """
-    print("Initializing MIRA environments (DP and Simulation)...")
-    envdp, env = mira_env(hp_args=hp_args)  # Removed naive_learner_env from unpack
+    # print("Initializing MIRA environments (DP and Simulation)...")
+    # envdp, env = mira_env(hp_args=hp_args)  # Removed naive_learner_env from unpack
     # result = mira_env()
     # print(":: MIRA ENV ", result)
     if mdp:
@@ -267,11 +267,50 @@ def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20
     return results_df
 
 
-def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = None, filename: str = None):
+def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = None, filename: str = None, hp_args=None):
     if seascapes:
-        p = Presets.p1_ss()
+        p_base = Presets.p1_ss()
     else:
-        p = Presets.p1_ls()
+        p_base = Presets.p1_ls()
+    
+    # Determine correct action space size
+    v_dataset = hp_args.dataset if hp_args else p_base.dataset
+    v_num_drugs = 15 if v_dataset == "mira" else 10
+    v_num_actions = v_num_drugs * 8 if seascapes else v_num_drugs
+
+    p = p_base
+    if hp_args:
+        p = Presets(
+            state_shape=p_base.state_shape,
+            num_actions=v_num_actions,
+            lr=hp_args.lr or p_base.lr,
+            # ... (batch_size, etc.)
+            epochs=hp_args.epochs or p_base.epochs,
+            train_steps_per_epoch=p_base.train_steps_per_epoch,
+            test_episodes=p_base.test_episodes,
+            batch_size=hp_args.batch_size or p_base.batch_size,
+            buffer_size=p_base.buffer_size,
+            activation=hp_args.activation or p_base.activation,
+            reward_clip=hp_args.reward_clip,
+            dataset=hp_args.dataset if hp_args else "mira",
+            gen_per_step=hp_args.gen_per_step if hp_args else 500
+        )
+    else:
+        # Even if no hp_args, we should ensure num_actions is correct for the dataset
+        p = Presets(
+            state_shape=p_base.state_shape,
+            num_actions=v_num_actions,
+            lr=p_base.lr,
+            epochs=p_base.epochs,
+            train_steps_per_epoch=p_base.train_steps_per_epoch,
+            test_episodes=p_base.test_episodes,
+            batch_size=p_base.batch_size,
+            buffer_size=p_base.buffer_size,
+            activation=p_base.activation,
+            reward_clip=p_base.reward_clip,
+            dataset=p_base.dataset,
+            gen_per_step=p_base.gen_per_step
+        )
 
     if train:
         if seascapes:
@@ -286,9 +325,19 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
             filename = f"{Path(filename).stem}_{signature}.pth"
 
     print(f"Using policy file: {filename}")
+    
+    # Load shared landscapes if available for synthetic evaluation
+    active_landscapes = None
+    if not ((hp_args and hp_args.dataset == "mira") or p_base.dataset == "mira"):
+        landscape_file = os.path.join(project_root, "log", "RL", "active_landscapes.pkl")
+        if os.path.exists(landscape_file):
+            print(f"Loading shared landscapes from: {landscape_file}")
+            with open(landscape_file, "rb") as f:
+                active_landscapes = pickle.load(f)
 
-    best_policy = load_best_policy(p, filename=filename, env_type="wf")
-    env = WrightFisherEnv(seascapes=seascapes, N=hp_args.n_mut if hp_args else 4)
+    # WF uses PPO, so we must load as PPO
+    best_policy = load_best_policy(p, filename=filename, env_type="wf", ppo=True)
+    env = WrightFisherEnv(seascapes=seascapes, num_drugs=v_num_drugs, seq_length=hp_args.n_mut if hp_args else 4, seascape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500)
     # Update env with WF specific parameters
     if hp_args:
         env.pop_size = hp_args.pop_size
@@ -314,20 +363,21 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
 
     # Get action frequencies sorted
     sorted_actions = np.array(list(action_freq.keys()))[np.argsort(np.array(list(action_freq.values())))][::-1]
-    reformatted_actions = [f"{(action % 10, int(action / 10))}: {action_freq[action]}" for action in sorted_actions]
+    reformatted_actions = [f"{(action % v_num_drugs, int(action / v_num_drugs))}: {action_freq[action]}" for action in sorted_actions]
     print("Top actions: \n\n", reformatted_actions)
 
     # Print out the seascapes of the testing environment
 
-    for ss in env.seascape_list:
-        SeascapeUtils.visualize_concentration_effects(ss)
+    # for ss in env.seascape_list:
+        # SeascapeUtils.visualize_concentration_effects(ss)
 
     random_policy = load_random_policy(p)
     if not seascapes:
-        random_results_df = run_sim_tianshou(env=WrightFisherEnv(), policy=random_policy, drugs=define_mira_landscapes())
+        random_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=hp_args.n_mut if hp_args else 4)
+        random_results_df = run_sim_tianshou(env=random_env, policy=random_policy)
     else:
         env.reset()
-        random_results_df = run_sim_tianshou(env=env, policy=random_policy, drugs=define_mira_landscapes())
+        random_results_df = run_sim_tianshou(env=env, policy=random_policy)
     print("\nAverage Random WF fitness: ", np.mean(random_results_df["Fitness"]))
 
     # TODO compare to random policy
@@ -354,7 +404,7 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
         ax.set_title('Genotype WF Proportions over time')
         ax.legend(loc="upper left", bbox_to_anchor=(1, 1), title="Genotype")
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
 
 def run_mdp(envdp, env):
@@ -484,7 +534,7 @@ def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
     p = p_base
     if hp_args:
         p = Presets(
-            state_shape=2**hp_args.n_mut,
+            state_shape=(2**hp_args.n_mut,),
             num_actions=p_base.num_actions,
             lr=hp_args.lr or p_base.lr,
             epochs=hp_args.epochs or p_base.epochs,
@@ -492,7 +542,10 @@ def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
             test_episodes=p_base.test_episodes,
             batch_size=hp_args.batch_size or p_base.batch_size,
             buffer_size=p_base.buffer_size,
-            activation=hp_args.activation or p_base.activation
+            activation=hp_args.activation or p_base.activation,
+            reward_clip=hp_args.reward_clip,
+            dataset=hp_args.dataset if hp_args else "mira",
+            gen_per_step=hp_args.gen_per_step if hp_args else 500
         )
 
     if train:
@@ -503,8 +556,17 @@ def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
         if signature:
             filename = f"best_policy_sswm_{signature}.pth"
 
+    # Load shared landscapes if available for synthetic evaluation
+    active_landscapes = None
+    if not ((hp_args and hp_args.dataset == "mira") or p_base.dataset == "mira"):
+        landscape_file = os.path.join(project_root, "log", "RL", "active_landscapes.pkl")
+        if os.path.exists(landscape_file):
+            print(f"Loading shared landscapes from: {landscape_file}")
+            with open(landscape_file, "rb") as f:
+                active_landscapes = pickle.load(f)
+
     best_policy : DQNPolicy = load_best_policy(p, filename=filename, env_type="sswm")
-    env = SSWMEnv(N=hp_args.n_mut if hp_args else 2)
+    env = SSWMEnv(N=hp_args.n_mut if hp_args else 2, landscapes=active_landscapes)
     results_df = run_sim_tianshou(env = env, policy=best_policy, num_episodes=10, episode_length=20, signature=signature)
 
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
@@ -521,7 +583,7 @@ def main_simple_sswm(train=True, signature=None, filename=None, hp_args=None):
 
     # Get action frequencies sorted
     sorted_actions = np.array(list(action_freq.keys()))[np.argsort(np.array(list(action_freq.values())))][::-1]
-    reformatted_actions = [f"{(action % 10, int(action / 10))}: {action_freq[action]}" for action in sorted_actions]
+    reformatted_actions = [f"{(action % env.num_drugs, int(action / env.num_drugs))}: {action_freq[action]}" for action in sorted_actions]
     print("Top actions: \n\n", reformatted_actions)
 
     print(np.identity(2**env.N))
@@ -559,7 +621,9 @@ if __name__ == "__main__":
     parser.add_argument("--pop-size", type=int, default=10000, help="Population size (for WF)")
     parser.add_argument("--mutation-rate", type=float, default=1e-5, help="Mutation rate (for WF)")
     parser.add_argument("--gen-per-step", type=int, default=500, help="Generations per step (for WF)")
-    parser.add_argument("--activation", type=str, default=None, help="Activation function (relu, tanh, sigmoid, swish, etc.)")
+    parser.add_argument("--activation", type=str, default=None, help="Activation function (relu, tanh, swish, etc.)")
+    parser.add_argument("--reward-clip", action="store_true", help="Enable reward clipping (default roughly [-5, 5])")
+    parser.add_argument("--dataset", type=str, default="mira", choices=["mira", "synthetic"], help="Dataset to use (mira or synthetic)")
     
     parser.set_defaults(train=True)
     

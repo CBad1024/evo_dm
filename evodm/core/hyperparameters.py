@@ -94,24 +94,87 @@ class Presets:
     test_episodes : int
     batch_size : int
     buffer_size : int
+    dataset: str = "mira"
     activation : str | None = "relu"
+    reward_clip: bool = False
+    gen_per_step: int = 500
 
     @staticmethod
-    def p1_ss() :
-        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=256, buffer_size=2048, activation="relu")
+    def p1_ss():
+        return Presets(
+            state_shape=(16,),
+            num_actions=15,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=1000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="mira",
+            activation="relu",
+            reward_clip=False
+        )
 
     @staticmethod
-    def p1_test() :
-        return Presets(state_shape = 16, num_actions = 80, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=20000, activation="relu")
+    def p1_test():
+        return Presets(
+            state_shape=(16,),
+            num_actions=15,
+            lr=0.0001,
+            epochs=2,
+            train_steps_per_epoch=10,
+            test_episodes=2,
+            batch_size=8,
+            buffer_size=50,
+            dataset="mira",
+            activation="relu",
+            reward_clip=False
+        )
 
     @staticmethod
     def p1_ls():
-        return Presets(state_shape = 16, num_actions = 10, lr=3e-4, epochs=60, train_steps_per_epoch=5000, test_episodes=10, batch_size=64, buffer_size=2048, activation="relu")
+        return Presets(
+            state_shape=(16,),
+            num_actions=10,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=1000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="mira",
+            activation="relu",
+            reward_clip=False
+        )
 
     @staticmethod
     def p2_ls():
-        return Presets(state_shape = 4, num_actions = 15, lr=1e-5, epochs=5, train_steps_per_epoch=5000, test_episodes=10, batch_size=128, buffer_size=20480, activation="relu")
+        return Presets(
+            state_shape=(16,),
+            num_actions=15,
+            lr=1e-4,
+            epochs=200,
+            train_steps_per_epoch=2000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=50000,
+            dataset="mira",
+            activation="relu",
+            reward_clip=False
+        )
 
     @staticmethod
-    def p2_test() :
-        return Presets(state_shape = 4, num_actions = 15, lr=1e-4, epochs=1, train_steps_per_epoch=5000, test_episodes=10, batch_size=32, buffer_size=2048, activation="relu")
+    def p2_test():
+        return Presets(
+            state_shape=(16,),
+            num_actions=150,
+            lr=0.001,
+            epochs=2,
+            train_steps_per_epoch=10,
+            test_episodes=2,
+            batch_size=8,
+            buffer_size=50,
+            dataset="mira",
+            activation="relu",
+            reward_clip=False
+        )

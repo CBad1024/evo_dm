@@ -5,16 +5,19 @@ from tianshou.env import DummyVectorEnv
 from .helpers import define_mira_landscapes
 
 class SSWMEnv(gym.Env):
-    def __init__(self, N = 2, switch_interval = 25, total_generations = 40, random_start = False):
+    def __init__(self, N = 2, switch_interval = 25, total_generations = 40, random_start = False, landscapes = None):
         super(SSWMEnv, self).__init__()
         self.N = N
         self.total_generations = total_generations
         self.random_start = random_start
 
-        # Slice landscapes for 2^N genotypes (e.g., 4 drugs, 2^N states)
-        # Mira has 15 drugs and 16 genotypes (N=4)
-        mira = define_mira_landscapes()
-        self.landscapes = mira[:, :2**self.N] 
+        if landscapes is not None:
+            self.landscapes = landscapes
+        else:
+            # Slice landscapes for 2^N genotypes (e.g., 4 drugs, 2^N states)
+            # Mira has 15 drugs and 16 genotypes (N=4)
+            mira = define_mira_landscapes()
+            self.landscapes = mira[:, :2**self.N] 
 
         self.num_drugs = len(self.landscapes)
 
@@ -38,9 +41,6 @@ class SSWMEnv(gym.Env):
         obs = np.zeros(2 ** self.N)
         obs[self.state] = 1  # One-hot encoding of the current state
 
-        if len(obs.shape) == 1:
-            obs = obs.reshape(1, -1)
-
 
         return obs, {}
 
@@ -63,9 +63,6 @@ class SSWMEnv(gym.Env):
         obs = np.zeros(2**self.N)
         obs[self.state] = 1  # One-hot encoding of the current state
 
-        if len(obs.shape) == 1:
-            obs = obs.reshape(1, -1)
-
 
         truncated = False
         terminated = self.generation >= self.total_generations
@@ -74,9 +71,9 @@ class SSWMEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     @staticmethod
-    def getEnv(n_train, n_test, N=2, random_start=False):
+    def getEnv(n_train, n_test, N=2, random_start=False, landscapes=None):
         def make_env():
-            return SSWMEnv(N=N, random_start=random_start)
+            return SSWMEnv(N=N, random_start=random_start, landscapes=landscapes)
         train_envs = DummyVectorEnv([make_env for _ in range(n_train)])
         test_envs = DummyVectorEnv([make_env for _ in range(n_test)])
         return train_envs, test_envs
