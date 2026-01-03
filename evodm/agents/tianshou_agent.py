@@ -223,8 +223,17 @@ def train_sswm_landscapes(p: P, signature: str = None):
     # Determine landscapes to use
     landscapes = None
     if hasattr(p, "dataset") and p.dataset == "mira":
-        print("Using MIRA landscapes for SSWM training.")
-        # Default behavior is MIRA if no landscapes passed to Env
+        from evodm.envs import define_mira_landscapes
+        v_N = 4  # MIRA is N=4
+        landscapes = define_mira_landscapes()
+        v_num_drugs = 15
+        print("Using MIRA (E. Coli) landscapes for Simple SSWM training.")
+    elif hasattr(p, "dataset") and p.dataset == "chen":
+        from evodm.envs import define_chen_landscapes
+        v_N = 3  # Chen is N=3
+        landscapes = define_chen_landscapes()
+        v_num_drugs = 4
+        print("Using Chen landscapes for Simple SSWM training.")
     else:
         print(f"Generating synthetic landscapes for SSWM training (N={v_N}).")
         from ..core.landscapes import Landscape
@@ -340,6 +349,7 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
     seascape_list = []
     if hasattr(p, "dataset") and p.dataset == "mira": # Using MIRA (E. Coli) landscapes
         print("Using MIRA (E. Coli) landscapes for Wright-Fisher training.")
+        v_N = 4
         mira_data = define_mira_landscapes() # (15, 16) array
         # Create Seascape objects from MIRA data
         # MIRA data is (num_drugs, num_genotypes). Seascape expects specific format or initialization.
@@ -351,6 +361,15 @@ def train_wf_landscapes(p: P, seascapes=False, signature: str = None):
              # For MIRA, we treat the provided values as the "max concentration" or reference landscape
              # The scale might need adjustment, but we'll use it as is for consistency with other envs
              s = Seascape(v_N, sigma=0.0, ls_max=mira_data[i], drug_label=i) 
+             seascape_list.append(s)
+    elif hasattr(p, "dataset") and p.dataset == "chen": # Using Chen landscapes
+        from evodm.envs import define_chen_landscapes
+        print("Using Chen landscapes for Wright-Fisher training.")
+        v_N = 3
+        chen_data = define_chen_landscapes() # (4, 8) array
+        # Create Seascape objects from Chen data
+        for i in range(4):
+             s = Seascape(v_N, sigma=0.0, ls_max=chen_data[i], drug_label=i)
              seascape_list.append(s)
     else:
         # Generate random landscapes but keep them consistent across envs

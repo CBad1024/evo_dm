@@ -153,6 +153,25 @@ def define_mira_landscapes(as_dict=False):
         drugs.append([2.59, 2.572, 2.393, 2.832, 2.44, 2.808, 2.652, 0.611, 2.067, 2.446, 2.957, 2.633, 2.735, 2.863, 2.796, 3.203])
     return np.array(drugs)
 
+def define_chen_landscapes(as_dict=False):
+    """
+    Chen et al. fitness landscapes for 8 genotypes (N=3) and 4 drugs.
+    Source: Chen et al. evolutionary dynamics paper
+    """
+    if as_dict:
+        drugs = {}
+        drugs['Drug_A'] = [0.993, 0.998, 1.009, 1.003, 1.007, 1.001, 0.992, 0.997]
+        drugs['Drug_B'] = [0.995, 1.005, 1.002, 0.999, 1.005, 0.994, 0.999, 1.001]
+        drugs['Drug_C'] = [0.997, 1.001, 0.989, 1.003, 1.003, 0.998, 1.010, 0.997]
+        drugs['Drug_D'] = [1.005, 0.988, 0.999, 1.001, 0.995, 1.011, 1.000, 0.999]
+    else:
+        drugs = []
+        drugs.append([0.993, 0.998, 1.009, 1.003, 1.007, 1.001, 0.992, 0.997])
+        drugs.append([0.995, 1.005, 1.002, 0.999, 1.005, 0.994, 0.999, 1.001])
+        drugs.append([0.997, 1.001, 0.989, 1.003, 1.003, 0.998, 1.010, 0.997])
+        drugs.append([1.005, 0.988, 0.999, 1.001, 0.995, 1.011, 1.000, 0.999])
+    return np.array(drugs)
+
 def define_successful_landscapes():
     return np.array([[1.20506869, 3.35382954, 0.32273345, 0.29391833],
      [3.99748972, 0.5007246, 1.94397629, 0.66432379],

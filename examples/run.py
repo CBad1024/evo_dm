@@ -47,6 +47,41 @@ def print(*args, **kwargs):
 
 builtins.print = print
 
+
+
+def evaluate_best_single_drug(landscape = define_mira_landscapes(), env_type = "wf", n_episodes=20, seq_length=4):
+    """
+    Evaluate the best single drug policy through simulating each individually.
+
+    Returns:
+        best_drug: int - index of the best-performing drug
+        best_fitness: float - fitness of the best-performing drug
+        trajectories: list of pd.DataFrame - trajectories of each drug
+    """
+    if env_type == "wf":
+        env = WrightFisherEnv(seq_length=seq_length, drugs=landscape, num_drugs=len(landscape), normalize_drugs=False,
+                               train_input='fitness')
+    elif env_type == "sswm":
+        env = SSWMEnv(N=seq_length, landscapes=landscape, num_drugs=len(landscape))
+    else:
+        raise ValueError(f"Invalid env_type: {env_type}")
+    
+    trajectories = []
+    best_drug = None
+    best_fitness = None
+    for i in range(len(landscape)):
+        env.reset()
+        env.action = i
+        trajectory = get_sequences(env, n_episodes=n_episodes)
+        trajectories.append(trajectory)
+        if best_fitness is None or trajectory['fitness'].mean() < best_fitness:  # Lower is better
+            best_drug = i
+            best_fitness = trajectory['fitness'].mean()
+
+    return best_drug, best_fitness, trajectories
+
+
+
 def log_trajectory_step(signature, episode, step, genotype, fitness, drug):
     if not signature:
         return
@@ -273,15 +308,25 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
     else:
         p_base = Presets.p1_ls()
     
-    # Determine correct action space size
+    # Determine correct action space size and state shape based on dataset
     v_dataset = hp_args.dataset if hp_args else p_base.dataset
-    v_num_drugs = 15 if v_dataset == "mira" else 10
+    if v_dataset == "mira":
+        v_num_drugs = 15
+        v_N = 4
+    elif v_dataset == "chen":
+        v_num_drugs = 4
+        v_N = 3
+    else:
+        v_num_drugs = 10  # synthetic default
+        v_N = hp_args.n_mut if hp_args else 4
+    
+    v_state_shape = (2**v_N,)  # State shape matches genotype count
     v_num_actions = v_num_drugs * 8 if seascapes else v_num_drugs
 
     p = p_base
     if hp_args:
         p = Presets(
-            state_shape=p_base.state_shape,
+            state_shape=v_state_shape,
             num_actions=v_num_actions,
             lr=hp_args.lr or p_base.lr,
             # ... (batch_size, etc.)
@@ -296,9 +341,9 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
             gen_per_step=hp_args.gen_per_step if hp_args else 500
         )
     else:
-        # Even if no hp_args, we should ensure num_actions is correct for the dataset
+        # Even if no hp_args, we should ensure num_actions and state_shape are correct for the dataset
         p = Presets(
-            state_shape=p_base.state_shape,
+            state_shape=v_state_shape,
             num_actions=v_num_actions,
             lr=p_base.lr,
             epochs=p_base.epochs,
@@ -379,6 +424,66 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
         env.reset()
         random_results_df = run_sim_tianshou(env=env, policy=random_policy)
     print("\nAverage Random WF fitness: ", np.mean(random_results_df["Fitness"]))
+    
+    # Evaluate best single-drug baseline (only if trained with signature)
+    if signature and train:
+        print("\nEvaluating best single-drug baseline...")
+        try:
+            # Get landscapes based on dataset type
+            if hp_args and hp_args.dataset == "mira":
+                from evodm.envs import define_mira_landscapes
+                landscapes = define_mira_landscapes()
+            elif hp_args and hp_args.dataset == "chen":
+                from evodm.envs import define_chen_landscapes
+                landscapes = define_chen_landscapes()
+            else:
+                landscapes = active_landscapes
+            
+            # Evaluate all single-drug policies
+            best_drug_id, best_fitness, all_trajectories = evaluate_best_single_drug(
+                landscape=landscapes, 
+                env_type="wf", 
+                n_episodes=20,
+                seq_length=v_N
+            )
+            
+            print(f"Best single drug: #{best_drug_id} with mean fitness: {best_fitness:.4f}")
+            
+            # Extract trajectories for best drug
+            best_drug_traj = all_trajectories[best_drug_id]
+            best_drug_episodes = []
+            for i in range(20):  # 20 episodes
+                episode_data = best_drug_traj[best_drug_traj['Episode'] == i]
+                best_drug_episodes.append(episode_data['Fitness'].tolist())
+            
+            # Extract learned policy trajectories
+            learned_episodes = []
+            for i in range(20 if len(results_df) >= 400 else 10):  # Use available episodes
+                episode_data = results_df[results_df['Episode'] == i]
+                learned_episodes.append(episode_data['Fitness'].tolist())
+            
+            # Save baseline and learned results
+            baseline_dir = os.path.join(project_root, "log", "baselines")
+            os.makedirs(baseline_dir, exist_ok=True)
+            
+            baseline_file = os.path.join(baseline_dir, f"{signature}_baseline.json")
+            with open(baseline_file, 'w') as f:
+                json.dump({
+                    'best_drug': int(best_drug_id),
+                    'mean_fitness': float(best_fitness),
+                    'trajectories': best_drug_episodes
+                }, f)
+            
+            learned_file = os.path.join(baseline_dir, f"{signature}_learned.json")
+            with open(learned_file, 'w') as f:
+                json.dump({
+                    'mean_fitness': float(np.mean([np.mean(ep) for ep in learned_episodes])),
+                    'trajectories': learned_episodes
+                }, f)
+            
+            print(f"Saved baseline comparison to: {baseline_dir}")
+        except Exception as e:
+            print(f"Warning: Could not evaluate baseline: {e}")
 
     # TODO compare to random policy
     states_unflattened = np.array(results_df.loc[:, "State"].values)
@@ -390,12 +495,12 @@ def run_wright_fisher(train: bool, seascapes: bool = False, signature: str = Non
 
     states = np.array(states_flat)
 
-    states = np.reshape(states, (10, 20, 16))
+    states = np.reshape(states, (10, 20, 2**v_N))
     print(states.shape)
 
     for episode in states:
         fig, ax = plt.subplots()
-        for i in range(16):
+        for i in range(2**v_N):
             gen = bin(i)[2:].zfill(4)
             ax.plot(episode[:, i], label=f'{gen}')
 
@@ -623,7 +728,7 @@ if __name__ == "__main__":
     parser.add_argument("--gen-per-step", type=int, default=500, help="Generations per step (for WF)")
     parser.add_argument("--activation", type=str, default=None, help="Activation function (relu, tanh, swish, etc.)")
     parser.add_argument("--reward-clip", action="store_true", help="Enable reward clipping (default roughly [-5, 5])")
-    parser.add_argument("--dataset", type=str, default="mira", choices=["mira", "synthetic"], help="Dataset to use (mira or synthetic)")
+    parser.add_argument("--dataset", type=str, default="mira", choices=["mira", "chen", "synthetic"], help="Dataset to use (mira, chen, or synthetic)")
     
     parser.set_defaults(train=True)
     

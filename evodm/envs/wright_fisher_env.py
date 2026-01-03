@@ -49,6 +49,10 @@ class WrightFisherEnv(gym.Env):
         self.current_drug = 0
         self.current_conc = 0
         self.generation = 0
+        
+        # Fitness statistics for reward scaling
+        self.fitness_stats = {'min': 0.0, 'max': 1.5, 'ema_alpha': 0.1}
+        
         self.reset()
 
     def reset(self, seed=None, options=None):
@@ -89,8 +93,21 @@ class WrightFisherEnv(gym.Env):
         avg_fit = sum((self.pop.get(g, 0) / self.pop_size) * fitness[g] for g in self.genotypes)
 
         if not self.seascapes:
-            # Negative reward directly penalizes high fitness (thriving bacteria)
-            reward = -avg_fit
+            # Scaled/Clipped reward: normalize fitness to [-1, 0] range
+            # Update running statistics with exponential moving average
+            alpha = self.fitness_stats['ema_alpha']
+            self.fitness_stats['min'] = (1 - alpha) * self.fitness_stats['min'] + alpha * min(avg_fit, self.fitness_stats['min'])
+            self.fitness_stats['max'] = (1 - alpha) * self.fitness_stats['max'] + alpha * max(avg_fit, self.fitness_stats['max'])
+            
+            # Normalize and clip
+            fitness_range = self.fitness_stats['max'] - self.fitness_stats['min']
+            if fitness_range > 1e-6:
+                # Map [min_fit, max_fit] -> [-1, 0]
+                normalized = -(avg_fit - self.fitness_stats['min']) / fitness_range
+                reward = np.clip(normalized, -1.0, 0.0)
+            else:
+                # Fallback if range is too small
+                reward = -avg_fit
 
         else:
             reward = 1-avg_fit

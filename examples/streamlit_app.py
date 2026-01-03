@@ -50,9 +50,10 @@ MODES = {
     "MDP Simulation": "mdp"
 }
 
-DATASETS = {
-    "Synthetic (NK)": {"N": "any", "description": "NK landscapes with tunable epistasis.", "cli": "synthetic"},
-    "Mira (E. Coli)": {"N": 4, "description": "Empirical fitness landscapes from Mira et al. (2015).", "cli": "mira"}
+DATASET_OPTIONS = {
+    "Mira (E. Coli)": {"N": 4, "description": "Empirical fitness landscapes from Mira et al. (2015).", "cli": "mira"},
+    "Chen et al.": {"N": 3, "description": "Empirical fitness landscapes from Chen et al.", "cli": "chen"},
+    "Synthetic": {"N": None, "description": "Randomly generated landscapes with configurable N.", "cli": "synthetic"}
 }
 
 # Initialize session state for simulations
@@ -100,7 +101,7 @@ def start_simulation(tab_id):
         "--n-mut", str(sim["hp"]["n_mut"]),
         "--sigma", str(sim["hp"]["sigma"]),
         "--activation", sim["hp"]["activation"],
-        "--dataset", DATASETS[sim["hp"]["dataset"]]["cli"]
+        "--dataset", DATASET_OPTIONS[sim["hp"]["dataset"]]["cli"]
     ]
 
     if sim["hp"].get("reward_clip", False):
@@ -356,6 +357,109 @@ def plot_live_policy(tab_id):
         st.error(f"Error loading policy snapshot: {e}")
 
 
+def plot_baseline_comparison(tab_id):
+    """
+    Plot fitness trajectories: Learned vs Best Single-Drug
+    """
+    sim = st.session_state.sims[tab_id]
+    signature = sim.get("signature")
+    if not signature:
+        return
+    
+    baseline_file = project_root / "log" / "baselines" / f"{signature}_baseline.json"
+    learned_file = project_root / "log" / "baselines" / f"{signature}_learned.json"
+    
+    if not baseline_file.exists() or not learned_file.exists():
+        return
+    
+    try:
+        with open(baseline_file) as f:
+            baseline_data = json.load(f)
+        
+        with open(learned_file) as f:
+            learned_data = json.load(f)
+        
+        st.subheader("Policy Comparison: Learned vs Best Single-Drug")
+        
+        # Display summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Best Single Drug",
+                f"Drug #{baseline_data['best_drug']}",
+                f"{baseline_data['mean_fitness']:.3f}"
+            )
+        with col2:
+            st.metric(
+                "Learned Policy",
+                "Multi-Drug Cycling",
+                f"{learned_data['mean_fitness']:.3f}"
+            )
+        with col3:
+            improvement = (baseline_data['mean_fitness'] - learned_data['mean_fitness']) / baseline_data['mean_fitness'] * 100
+            st.metric(
+                "Improvement",
+                f"{improvement:.1f}%",
+                delta=f"{improvement:.1f}%",
+                delta_color="inverse" if improvement > 0 else "normal"  # Lower fitness is better
+            )
+        
+        # Plot fitness trajectories
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Convert trajectories to numpy arrays and pad to same length
+        baseline_trajs = baseline_data['trajectories']
+        learned_trajs = learned_data['trajectories']
+        
+        max_len = max(
+            max(len(t) for t in baseline_trajs) if baseline_trajs else 0,
+            max(len(t) for t in learned_trajs) if learned_trajs else 0
+        )
+        
+        if max_len == 0:
+            st.warning("No trajectory data available")
+            return
+        
+        # Pad and compute mean ± std
+        baseline_padded = np.array([
+            t + [np.nan] * (max_len - len(t))
+            for t in baseline_trajs
+        ])
+        learned_padded = np.array([
+            t + [np.nan] * (max_len - len(t))
+            for t in learned_trajs
+        ])
+        
+        baseline_mean = np.nanmean(baseline_padded, axis=0)
+        baseline_std = np.nanstd(baseline_padded, axis=0)
+        learned_mean = np.nanmean(learned_padded, axis=0)
+        learned_std = np.nanstd(learned_padded, axis=0)
+        
+        timesteps = np.arange(max_len)
+        
+        # Plot means
+        ax.plot(timesteps, baseline_mean, label=f'Best Single Drug (#{baseline_data["best_drug"]})', color='orange', linewidth=2)
+        ax.plot(timesteps, learned_mean, label='Learned Policy', color='blue', linewidth=2)
+        
+        # Plot std bands
+        ax.fill_between(timesteps, baseline_mean - baseline_std, baseline_mean + baseline_std, alpha=0.3, color='orange')
+        ax.fill_between(timesteps, learned_mean - learned_std, learned_mean + learned_std, alpha=0.3, color='blue')
+        
+        ax.set_xlabel('Timestep')
+        ax.set_ylabel('Population Fitness')
+        ax.set_title('Fitness Trajectory Comparison (Mean ± Std)')
+        ax.legend()
+        ax.grid(alpha=0.3)
+        
+        st.pyplot(fig)
+        
+        st.caption("💡 Lower fitness indicates better drug efficacy. Learned policy should show lower fitness (more effective) than single-drug baseline.")
+        
+    except Exception as e:
+        st.error(f"Error loading baseline comparison: {e}")
+
+
+
 def plot_training_progress(tab_id):
     sim = st.session_state.sims[tab_id]
     signature = sim.get("signature")
@@ -469,6 +573,8 @@ def render_status_logic(tab_id):
                 st.divider()
              plot_training_progress(tab_id)
              st.divider()
+             plot_baseline_comparison(tab_id)
+             st.divider()
              
              if not sim["train"]:
                 plot_live_trajectory(tab_id)
@@ -560,18 +666,21 @@ def render_tab_content(tab_id):
         st.subheader("Dataset & Regime")
         
         # Dataset Selection with Filtering Logic
-        available_datasets = [name for name, meta in DATASETS.items() if meta["N"] == "any" or meta["N"] == sim["hp"]["n_mut"]]
+        available_datasets = [name for name, meta in DATASET_OPTIONS.items() if meta["N"] == "any" or meta["N"] == sim["hp"]["n_mut"]]
         
         sim["hp"]["dataset"] = st.selectbox(
             "Select Dataset", 
             available_datasets, 
             index=0 if sim["hp"]["dataset"] not in available_datasets else available_datasets.index(sim["hp"]["dataset"]),
             key=f"dataset_sel_{tab_id}",
-            help=DATASETS[sim["hp"]["dataset"]]["description"] if sim["hp"]["dataset"] in DATASETS else ""
+            help=DATASET_OPTIONS[sim["hp"]["dataset"]]["description"] if sim["hp"]["dataset"] in DATASET_OPTIONS else ""
         )
         
         if sim["hp"]["dataset"] == "Mira (E. Coli)" and sim["hp"]["n_mut"] != 4:
             st.warning("Mira dataset is strictly for N=4. Please adjust the mutation slider.")
+        
+        if sim["hp"]["dataset"] == "Chen et al." and sim["hp"]["n_mut"] != 3:
+            st.warning("Chen dataset is strictly for N=3. Please adjust the mutation slider.")
             
         sim["hp"]["activation"] = st.selectbox(
             "Activation Function", 
